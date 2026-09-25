@@ -45,6 +45,9 @@
 - 客户端必须通过 `window.__ModuleLoader__.load(...)` 注册，不能发布裸 ESM `client.js`（会打断同响应内其他插件注册）
 - `build-client.mjs` 强制生成单一注册 payload，内部模块不可拆成独立文件
 - **客户端 bundle 无法引入 npm 第三方库**（build-client 仅 `transpileModule` 不做依赖打包，只有宿主提供的 require 可用，如 react）。因此知识图谱可视化须用原生 SVG 自研（GraphView 已实现：滚轮缩放、拖拽节点、悬停高亮关联、边权重标签），不能依赖 react-force-graph/Sigma 等图库
+- **图谱节点拖拽越界**：`GraphView.onMove` 里节点会直接跟随鼠标世界坐标；必须用 `Math.max(labelRoom, Math.min(720-labelRoom, wx))`（x）与 `Math.min(480-labelRoom, wy)`（y）约束在 720×480 viewBox 内（labelRoom = 节点半径 + 34，为下方文字留空间），否则节点能被拖出边界
+- **UI 视觉设计基线**：整体风格沉淀在 `DESIGN.md`（墨蓝品牌 `#4f46e5` + `--brand`/`--brand-soft` 变量、低饱和背景 `#f7f8fb`、卡片层级 + 柔和阴影 + 圆角、hover 上浮动效）。颜色统一走 `client.css` 顶部的 CSS 变量，不散写硬编码色值
+- **复习视图用 `MediaGallery compact`** 渲染错题图片/视频/HTML 动态卡片（不仅详情 Sheet）；后台生成的动画卡片/视频通过 `artifacts`（kind=image/video/html）经 `MediaGallery` 展示，`review-view`/`question-sheet` 均可复用
 - API 有 same-origin 校验与 8MB body 上限；图片仅限 PNG/JPEG/WebP/GIF 且 ≤5MB/≤8MB 校验
 - **Kuzu Node 绑定（0.11.3）无法加载 vector 扩展**：`LOAD EXTENSION vector` 静默 no-op，`CREATE_VECTOR_INDEX`（HNSW）不可用；向量召回须用核心函数 `ARRAY_COSINE_SIMILARITY` 全表扫描（对小数据足够）
 - **Kuzu embedding 列用 `FLOAT[N]`，查询向量须 `CAST([...], 'FLOAT[N]')`**，否则报 `requires argument type to be FLOAT[]`；`ARRAY_COSINE_SIMILARITY` 返回相似度（越近越大），与下游 `1 - sim` 转换

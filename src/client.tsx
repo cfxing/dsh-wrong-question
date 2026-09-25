@@ -105,8 +105,7 @@ function ReviewView({qs,onReviewed}:{qs:Question[];onReviewed:()=>Promise<void>}
   const q=qs[index]
   if(!q)return <div className="review-empty"><span>✓</span><h2>今天的复习完成了</h2><p>新的到期错题会自动出现在这里。</p></div>
   const grade=async(g:string)=>{setBusy(true);try{await post(`/questions/${q.id}/review`,{grade:g});await onReviewed();setRevealed(false);setIndex(i=>Math.min(i,Math.max(0,qs.length-2)))}finally{setBusy(false)}}
-  const image=questionImage(q)
-  return <div className="review-card"><div className="review-progress">第 {index+1} / {qs.length} 题</div>{image&&<img className="question-image" src={image} alt="错题图片"/>}<h2>{q.content}</h2><div className="chips">{q.knowledgePoints.map(x=><span key={x}>{x}</span>)}</div>
+  return <div className="review-card"><div className="review-progress">第 {index+1} / {qs.length} 题</div><MediaGallery q={q} compact/><h2>{q.content}</h2><div className="chips">{q.knowledgePoints.map(x=><span key={x}>{x}</span>)}</div>
     {!revealed?<button className="reveal" onClick={()=>setRevealed(true)}>显示答案</button>:<div className="review-answer"><h3>正确答案</h3><pre>{q.answer||'尚未填写'}</pre>{q.analysis&&<><h3>解析</h3><p>{q.analysis}</p></>}<div className="review-buttons">{(['again','hard','good','easy'] as const).map(g=><button disabled={busy} key={g} onClick={()=>void grade(g)}><b>{labelGrade(g)}</b><small>{nextHint(q,g)}</small></button>)}</div></div>}
   </div>
 }
@@ -124,16 +123,16 @@ function QuestionSheet({q,close,edit,refresh}:{q:Question;close:()=>void;edit:()
 
 function Detail({title,value}:{title:string;value?:string}){return value?<section><h3>{title}</h3><p className="preserve">{value}</p></section>:null}
 
-function MediaGallery({q}:{q:Question}){
+function MediaGallery({q,compact}:{q:Question;compact?:boolean}){
   const primary=questionImage(q)
   const artifacts=q.artifacts??[]
   if(!primary&&!artifacts.length)return q.imagePath?<div className="media-missing">原题图片路径无法在浏览器中访问：{q.imagePath}</div>:null
-  return <section className="artifact-gallery"><h3>原题与互动内容</h3>{primary&&<img className="question-image" src={primary} alt="原题图片"/>}{artifacts.map((a,i)=>{
+  return <section className={`artifact-gallery${compact?' compact':''}`}>{!compact&&<h3>原题与互动内容</h3>}{primary&&<img className="question-image" src={primary} alt="原题图片"/>}{artifacts.map((a,i)=>{
     const title=a.title||`${a.kind} ${i+1}`
-    if(a.kind==='image'){const src=mediaUrl(a.source,'image');return src?<figure key={i}><img className="question-image" src={src} alt={title}/><figcaption>{title}</figcaption></figure>:null}
-    if(a.kind==='video'){const src=mediaUrl(a.source,'video');return src?<figure key={i}><video className="question-video" src={src} poster={mediaUrl(a.poster,'image')} controls preload="metadata"/><figcaption>{title}</figcaption></figure>:null}
-    if(a.kind==='html'&&a.content)return <figure key={i}><iframe className="question-html" title={title} srcDoc={a.content} sandbox="allow-scripts"/><figcaption>{title}</figcaption></figure>
-    const src=mediaUrl(a.source,'html');return src?<figure key={i}><iframe className="question-html" title={title} src={src} sandbox="allow-scripts"/><figcaption>{title}</figcaption></figure>:null
+    if(a.kind==='image'){const src=mediaUrl(a.source,'image');return src?<figure key={i}><img className="question-image" src={src} alt={title}/>{compact?null:<figcaption>{title}</figcaption>}</figure>:null}
+    if(a.kind==='video'){const src=mediaUrl(a.source,'video');return src?<figure key={i}><video className="question-video" src={src} poster={mediaUrl(a.poster,'image')} controls preload="metadata"/>{compact?null:<figcaption>{title}</figcaption>}</figure>:null}
+    if(a.kind==='html'&&a.content)return <figure key={i}><iframe className="question-html" title={title} srcDoc={a.content} sandbox="allow-scripts"/>{compact?null:<figcaption>{title}</figcaption>}</figure>
+    const src=mediaUrl(a.source,'html');return src?<figure key={i}><iframe className="question-html" title={title} src={src} sandbox="allow-scripts"/>{compact?null:<figcaption>{title}</figcaption>}</figure>:null
   })}</section>
 }
 
@@ -186,11 +185,14 @@ function GraphView({g,onPick}:{g:any;onPick:(name:string)=>void}){
   }
   const onMove=(e:React.PointerEvent)=>{
     const nd=nodeDragRef.current
-    if(nd){ // 拖动节点：换算到世界坐标
+    if(nd){ // 拖动节点：换算到世界坐标并约束在画布内
       const rect=svgRef.current?.getBoundingClientRect();if(!rect)return
       movedRef.current=true
+      const node=layout.nodes.find((n:any)=>n.id===nd)
+      const radius=node?.r??24,labelRoom=radius+34
       const wx=(e.clientX-rect.left-vp.tx)/vp.scale,wy=(e.clientY-rect.top-vp.ty)/vp.scale
-      setPos(p=>({...p,[nd]:{x:wx,y:wy}}))
+      const cx=Math.max(labelRoom,Math.min(720-labelRoom,wx)),cy=Math.max(labelRoom,Math.min(480-labelRoom,wy))
+      setPos(p=>({...p,[nd]:{x:cx,y:cy,clamped:true}}))
       return
     }
     if(!dragRef.current.on)return
@@ -240,8 +242,8 @@ function GraphView({g,onPick}:{g:any;onPick:(name:string)=>void}){
 function layoutGraph(g:any){
   const source=[...g.nodes].sort((a:any,b:any)=>b.count-a.count).slice(0,50)
   const allowed=new Set(source.map((x:any)=>x.id));const max=Math.max(1,...source.map((x:any)=>x.count))
-  const colors=['#2563eb','#059669','#7c3aed','#dc2626','#d97706','#0891b2','#db2777','#65a30d']
-  const nodes=source.map((n:any,i:number)=>{const angle=2*Math.PI*i/Math.max(1,source.length);return{...n,x:300+Math.cos(angle)*170,y:240+Math.sin(angle)*170,r:16+22*Math.sqrt(n.count/max),color:colors[i%colors.length]}})
+  const colors=['#4f46e5','#0ea5e9','#10b981','#8b5cf6','#ef4444','#f59e0b','#06b6d4','#ec4899']
+  const nodes=source.map((n:any,i:number)=>{const angle=2*Math.PI*i/Math.max(1,source.length);return{...n,x:300+Math.cos(angle)*170,y:235+Math.sin(angle)*170,r:16+22*Math.sqrt(n.count/max),color:colors[i%colors.length]}})
   const byId=new Map(nodes.map((n:any)=>[n.id,n]));const edges=g.edges.filter((e:any)=>allowed.has(e.source)&&allowed.has(e.target)).map((e:any)=>({...e,source:byId.get(e.source),target:byId.get(e.target)}))
   for(let step=0;step<140;step++){
     const force=nodes.map(()=>({x:0,y:0}))
