@@ -165,7 +165,18 @@ function GraphView({g,onPick}:{g:any;onPick:(name:string)=>void}){
   const movedRef=React.useRef(false)
   const pairs=[...g.edges].sort((a:any,b:any)=>b.weight-a.weight).slice(0,8)
   const at=(n:any)=>pos[n.id]||{x:n.x,y:n.y}
-  const reset=()=>{setPos({});setVp({scale:1,tx:0,ty:0})}
+  const computeFit=()=>{
+    if(!layout.nodes.length)return {scale:1,tx:0,ty:0}
+    const margin=48,WB=720,HB=480
+    let minX=1e9,minY=1e9,maxX=-1e9,maxY=-1e9
+    for(const n of layout.nodes){const bottom=n.y+n.r+34;minX=Math.min(minX,n.x-n.r);maxX=Math.max(maxX,n.x+n.r);minY=Math.min(minY,n.y-n.r);maxY=Math.max(maxY,bottom)}
+    const bw=Math.max(1,maxX-minX),bh=Math.max(1,maxY-minY)
+    const scale=Math.min(4,Math.max(0.4,Math.min((WB-2*margin)/bw,(HB-2*margin)/bh)))
+    return {scale,tx:(WB-bw*scale)/2-minX*scale,ty:(HB-bh*scale)/2-minY*scale}
+  }
+  const fittedKey=JSON.stringify(g.nodes.map((n:any)=>n.id).sort())
+  const reset=()=>{setPos({});setVp(computeFit())}
+  React.useEffect(()=>{setPos({});setVp(computeFit())},[fittedKey])
   const zoomAt=(px:number,py:number,factor:number)=>{
     setVp(v=>{
       const scale=Math.min(4,Math.max(0.4,v.scale*factor))
