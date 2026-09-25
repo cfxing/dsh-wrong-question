@@ -160,8 +160,13 @@ function GraphView({g,onPick}:{g:any;onPick:(name:string)=>void}){
   const dragRef=React.useRef<{x:number;y:number;on:boolean}>({x:0,y:0,on:false})
   if(!g)return null
   const layout=layoutGraph(g)
+  const [pos,setPos]=useState<Record<string,{x:number;y:number}>>({})
+  const [hover,setHover]=useState<string|null>(null)
+  const nodeDragRef=React.useRef<string|null>(null)
+  const movedRef=React.useRef(false)
   const pairs=[...g.edges].sort((a:any,b:any)=>b.weight-a.weight).slice(0,8)
-  const reset=()=>setVp({scale:1,tx:0,ty:0})
+  const at=(n:any)=>pos[n.id]||{x:n.x,y:n.y}
+  const reset=()=>{setPos({});setVp({scale:1,tx:0,ty:0})}
   const zoomAt=(px:number,py:number,factor:number)=>{
     setVp(v=>{
       const scale=Math.min(4,Math.max(0.4,v.scale*factor))
@@ -175,22 +180,49 @@ function GraphView({g,onPick}:{g:any;onPick:(name:string)=>void}){
     zoomAt(e.clientX-rect.left,e.clientY-rect.top,e.deltaY<0?1.12:1/1.12)
   }
   const onDown=(e:React.PointerEvent)=>{
+    if(nodeDragRef.current)return
     dragRef.current={x:e.clientX,y:e.clientY,on:true}
     svgRef.current?.setPointerCapture(e.pointerId)
   }
   const onMove=(e:React.PointerEvent)=>{
+    const nd=nodeDragRef.current
+    if(nd){ // 拖动节点：换算到世界坐标
+      const rect=svgRef.current?.getBoundingClientRect();if(!rect)return
+      movedRef.current=true
+      const wx=(e.clientX-rect.left-vp.tx)/vp.scale,wy=(e.clientY-rect.top-vp.ty)/vp.scale
+      setPos(p=>({...p,[nd]:{x:wx,y:wy}}))
+      return
+    }
     if(!dragRef.current.on)return
     setVp(v=>({...v,tx:v.tx+e.clientX-dragRef.current.x,ty:v.ty+e.clientY-dragRef.current.y}))
     dragRef.current={x:e.clientX,y:e.clientY,on:true}
   }
-  const onUp=()=>{dragRef.current.on=false}
-  return <div className="graph-page"><h2>知识图谱</h2><p>节点大小代表错题数量，连线粗细代表两个知识点共同出现的频率，点击节点查看对应错题。</p>
+  const onUp=()=>{
+    const wasNode=!!nodeDragRef.current
+    dragRef.current.on=false
+    nodeDragRef.current=null
+    setHover(null)
+    if(!wasNode)movedRef.current=false // 平移重置; 节点拖拽保留给 onClick 判断
+  }
+  const nodeDown=(e:React.PointerEvent,n:any)=>{
+    e.stopPropagation();e.preventDefault()
+    movedRef.current=false
+    nodeDragRef.current=n.id;setPos(p=>({...p,[n.id]:{...at(n)}}))
+  }
+  const dim=(n:any,nab:Set<unknown>)=>!!hover&&hover!==n.id&&!nab.has(n.id)
+  return <div className="graph-page"><h2>知识图谱</h2><p>节点大小代表错题数量，连线粗细代表共同出现的频率。可拖拽节点、滚轮缩放，点击节点查看错题，悬停高亮关联。</p>
     {layout.nodes.length?<div className="knowledge-map">
       <div className="graph-stage">
-        <svg ref={svgRef} viewBox="0 0 720 480" role="img" aria-label="知识点关系图" onWheel={onWheel} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} style={{cursor:dragRef.current.on?'grabbing':'grab'}}>
+        <svg ref={svgRef} viewBox="0 0 720 480" role="img" aria-label="知识点关系图" onWheel={onWheel} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} style={{cursor:nodeDragRef.current?'move':dragRef.current.on?'grabbing':'grab'}}>
           <g transform={`translate(${vp.tx} ${vp.ty}) scale(${vp.scale})`}>
-            <g className="graph-lines">{layout.edges.map((e:any)=><g key={e.source.id+'-'+e.target.id} className="graph-edge"><line x1={e.source.x} y1={e.source.y} x2={e.target.x} y2={e.target.y} strokeWidth={Math.min(7,1+e.weight)} /><text x={(e.source.x+e.target.x)/2} y={(e.source.y+e.target.y)/2}>{e.weight}</text></g>)}</g>
-            <g>{layout.nodes.map((n:any)=><g className="graph-vertex" key={n.id} role="button" tabIndex={0} onClick={(ev)=>{ev.stopPropagation();if(!dragRef.current.on)onPick(n.id)}} onPointerDown={(ev)=>ev.stopPropagation()} onKeyDown={e=>{if(e.key==='Enter'||e.key===' ')onPick(n.id)}}><circle cx={n.x} cy={n.y} r={n.r} fill={n.color}/><text x={n.x} y={n.y+n.r+16} textAnchor="middle">{n.id} ({n.count})</text><title>{n.id}：{n.count} 道，掌握 {n.mastery}%，待复习 {n.due}</title></g>)}</g>
+            <g className="graph-lines">{layout.edges.map((e:any)=>{
+              const s=at(e.source),t=at(e.target),on=!hover||hover===e.source.id||hover===e.target.id
+              return <g key={e.source.id+'-'+e.target.id} className={`graph-edge${on?'':' dim'}`}><line x1={s.x} y1={s.y} x2={t.x} y2={t.y} strokeWidth={Math.min(7,1+e.weight)} /><text x={(s.x+t.x)/2} y={(s.y+t.y)/2}>{e.weight}次</text></g>
+            })}</g>
+            <g>{layout.nodes.map((n:any)=>{
+              const p=at(n),nabors=new Set(layout.edges.filter((e:any)=>e.source.id===n.id||e.target.id===n.id).flatMap((e:any)=>[e.source.id,e.target.id]))
+              return <g className={`graph-vertex${hover===n.id?' on':''}${dim(n,nabors)?' dim':''}`} key={n.id} role="button" tabIndex={0} onPointerDown={e=>nodeDown(e,n)} onClick={ev=>{ev.stopPropagation();if(movedRef.current)movedRef.current=false;else onPick(n.id)}} onPointerEnter={()=>setHover(n.id)} onPointerLeave={()=>setHover(null)} onKeyDown={e=>{if(e.key==='Enter'||e.key===' ')onPick(n.id)}}><circle cx={p.x} cy={p.y} r={n.r} fill={n.color}/><text x={p.x} y={p.y+n.r+16} textAnchor="middle">{n.id} ({n.count})</text><title>{n.id}：{n.count} 道，掌握 {n.mastery}%，待复习 {n.due}</title></g>
+            })}</g>
           </g>
         </svg>
         <div className="graph-controls">
