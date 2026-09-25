@@ -3,9 +3,13 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { mkdirSync } from 'node:fs'
 import { WrongQuestionDb } from './db.js'
+import type { GraphSyncHook } from './db.js'
 import { scheduleReview } from './review.js'
 import type { ReviewGrade } from './domain.js'
 import { registerWrongQuestionWeb } from './web.js'
+import { KnowledgeGraph } from './knowledge-graph.js'
+import { OllamaEmbedder, type Embedder } from './embedding.js'
+import { hybridSearch } from './hybrid.js'
 
 export const name='wrong-question'
 export const inject=['tools']
@@ -13,12 +17,20 @@ export const inject=['tools']
 function dbPath(){const home=process.env.DSH_HOME||join(homedir(),'.dsh');const dir=join(home,'wrong-question');mkdirSync(dir,{recursive:true});return join(dir,'wrong-questions.sqlite')}
 
 export function apply(ctx:Context){
-  const db=new WrongQuestionDb(dbPath())
+  const embedder = new OllamaEmbedder()
+  let graph: KnowledgeGraph | null = null
+  const graphSync: GraphSyncHook = {
+    upsert: (q) => { if (graph) return graph.upsertQuestion(q) },
+    delete: (id) => { if (graph) return graph.deleteQuestion(id) },
+    close: () => { if (graph) return graph.close() },
+  }
+  const db=new WrongQuestionDb(dbPath(), graphSync)
+  void initGraph(db, embedder).then((g) => { graph = g })
   ctx.effect(()=>()=>db.close(),'dsh-wrong-question: sqlite')
   // Browser workspace and server API share the same SQLite connection.
   const runtime=ctx as any
-  if(runtime.inject)runtime.inject(['webServer'],(http:any)=>registerWrongQuestionWeb(http,db))
-  else if(runtime.webServer)registerWrongQuestionWeb(runtime,db)
+  if(runtime.inject)runtime.inject(['webServer'],(http:any)=>registerWrongQuestionWeb(http,db,{graph,embedder}))
+  else if(runtime.webServer)registerWrongQuestionWeb(runtime,db,{graph,embedder})
 
   // Tool registration is intentionally kept compact here; the Web workspace uses
   // the same domain service, so Agents and UI cannot diverge in persistence.
@@ -65,10 +77,27 @@ export function apply(ctx:Context){
     {limit:{type:'integer'}},[],async(a:any)=>db.due(a.limit??20))
   register('get_learning_dashboard','Get learning dashboard.',{},[],async()=>db.dashboard())
   register('get_knowledge_graph','Get knowledge graph.',{},[],async()=>db.graph())
-
+  register('hybrid_search_questions','Hybrid retrieval: fuse lexical (FTS), vector (semantic embedding), and knowledge-graph traversal ranking via Reciprocal Rank Fusion. Use for queries where any single retrieval mode is insufficient.',
+    {query:{type:'string'},limit:{type:'integer'}},['query'],
+    async(a:any)=>hybridSearch(db,graph,embedder,a.query,{topK:Math.min(50,a.limit??10)}))
 }
 
 function toToolJson(value:unknown):string{
   const json=JSON.stringify(value,(_key,item)=>typeof item==='bigint'?item.toString():item)
   return json===undefined?'null':json
+}
+
+/** 初始化 Kuzu 图存储并做全量投影；失败（如原生绑定缺失/库不可用）返回 null，系统降级为纯 SQLite。 */
+export async function initGraph(db: WrongQuestionDb, embedder: Embedder): Promise<KnowledgeGraph | null> {
+  try {
+    const home = process.env.DSH_HOME || join(homedir(), '.dsh')
+    const dir = join(home, 'wrong-question')
+    mkdirSync(dir, { recursive: true })
+    const graph = new KnowledgeGraph({ path: join(dir, 'knowledge.kuzu'), embedder })
+    await graph.ready
+    await graph.rebuild(db.all())
+    return graph
+  } catch {
+    return null
+  }
 }

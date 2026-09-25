@@ -5,6 +5,9 @@ import type { RuntimeContextLike } from './runtime.js'
 import { scheduleReview } from './review.js'
 import type { ReviewGrade } from './domain.js'
 import { WrongQuestionDb } from './db.js'
+import type { KnowledgeGraph } from './knowledge-graph.js'
+import type { Embedder } from './embedding.js'
+import { hybridSearch } from './hybrid.js'
 
 const PREFIX='/wrong-question-control/v1'
 const WEB='/wrong-question/'
@@ -17,7 +20,7 @@ function error(res:ServerResponse,e:unknown){send(res,400,{error:e instanceof Er
 async function body(req:IncomingMessage){let s='';for await(const c of req){s+=c;if(s.length>8_000_000)throw new Error('request body too large')}return s?JSON.parse(s):{}}
 function sameOrigin(req:IncomingMessage){const origin=req.headers.origin;if(!origin)return true;const host=req.headers.host??'';try{return new URL(origin).host===host}catch{return false}}
 
-export function registerWrongQuestionWeb(ctx:RuntimeContextLike,db:WrongQuestionDb){
+export function registerWrongQuestionWeb(ctx:RuntimeContextLike,db:WrongQuestionDb,hybrid: { graph: KnowledgeGraph | null; embedder: Embedder } = { graph: null, embedder: undefined as unknown as Embedder }){
   const ws=ctx.webServer??ctx.get('webServer') as RuntimeContextLike['webServer']
   if(!ws)throw new Error('dsh-wrong-question requires webServer')
   const routes=[
@@ -35,6 +38,7 @@ export function registerWrongQuestionWeb(ctx:RuntimeContextLike,db:WrongQuestion
           return send(res,200,db.list({limit:Number(u.searchParams.get('limit')??100),offset:Number(u.searchParams.get('offset')??0),tag:u.searchParams.get('tag')??undefined,knowledgePoint:u.searchParams.get('knowledgePoint')??undefined,dueOnly:u.searchParams.get('dueOnly')==='1'}))
         }
         if(req.method==='POST'&&p==='/search'){const b=await body(req);return send(res,200,db.search(String(b.query??''),Math.min(50,Number(b.limit??20))))}
+        if(req.method==='POST'&&p==='/hybrid'){const b=await body(req);return send(res,200,await hybridSearch(db,hybrid.graph,hybrid.embedder,String(b.query??''),{topK:Math.min(50,Number(b.limit??20))}))}
         if(req.method==='POST'&&p==='/similar'){const b=await body(req);return send(res,200,db.findSimilar(String(b.questionId??''),Math.min(50,Number(b.limit??10))))}
         const m=p.match(/^\/questions\/([^/]+)$/)
         const image=p.match(/^\/questions\/([^/]+)\/image$/)

@@ -28,11 +28,20 @@ function parseQuestion(row: any): Question {
   }
 }
 
+export interface GraphSyncHook {
+  upsert(question: Question): Promise<void> | void
+  delete(id: string): Promise<void> | void
+  close(): Promise<void> | void
+}
+
 export class WrongQuestionDb {
   readonly db: DatabaseSync
+  /** 写入 SQLite 时同步更新 Kuzu 图谱的旁路钩子（可空）。 */
+  private graphSync?: GraphSyncHook
 
-  constructor(path: string) {
+  constructor(path: string, graphSync?: GraphSyncHook) {
     mkdirSync(dirname(path), { recursive: true })
+    this.graphSync = graphSync
     this.db = new DatabaseSync(path)
     this.db.exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;')
     this.db.exec(`
@@ -81,7 +90,10 @@ export class WrongQuestionDb {
     try { this.db.exec("ALTER TABLE questions ADD COLUMN artifacts TEXT NOT NULL DEFAULT '[]'") } catch {}
   }
 
-  close() { this.db.close() }
+  close() {
+    this.db.close()
+    void this.graphSync?.close?.()
+  }
 
   getQuestion(id: string): Question | null {
     const row = this.db.prepare('SELECT * FROM questions WHERE id=?').get(id)
@@ -114,7 +126,9 @@ export class WrongQuestionDb {
       review.reps, review.ease, review.intervalDays, review.dueAt, review.lastReviewedAt ?? null
     )
     this.reindex(id)
-    return this.getQuestion(id)!
+    const q = this.getQuestion(id)!
+    void this.graphSync?.upsert?.(q)
+    return q
   }
 
   private reindex(id: string) {
@@ -127,6 +141,7 @@ export class WrongQuestionDb {
   delete(id: string) {
     const result = this.db.prepare('DELETE FROM questions WHERE id=?').run(id)
     this.db.prepare('DELETE FROM questions_fts WHERE question_id=?').run(id)
+    void this.graphSync?.delete?.(id)
     return Number(result.changes) > 0
   }
 
