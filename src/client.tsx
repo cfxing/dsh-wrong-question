@@ -39,6 +39,7 @@ function WrongQuestionWorkspace({close}:{close:()=>void}){
   const [selected,setSelected]=useState<Question>()
   const [editing,setEditing]=useState<Question|null|undefined>()
   const [search,setSearch]=useState('')
+  const [focusPoint,setFocusPoint]=useState<string|null>(null)
   const [loading,setLoading]=useState(false)
   const [error,setError]=useState('')
   const load=async()=>{
@@ -47,13 +48,14 @@ function WrongQuestionWorkspace({close}:{close:()=>void}){
     catch(e){setError(message(e))}finally{setLoading(false)}
   }
   useEffect(()=>{void load()},[])
-  const filtered=useMemo(()=>{const s=search.trim().toLocaleLowerCase();return s?questions.filter(q=>questionText(q).includes(s)):questions},[questions,search])
+  const filtered=useMemo(()=>{if(focusPoint){return questions.filter(q=>q.knowledgePoints.map(k=>k.toLocaleLowerCase()).includes(focusPoint.toLocaleLowerCase()))}const s=search.trim().toLocaleLowerCase();return s?questions.filter(q=>questionText(q).includes(s)):questions},[questions,search,focusPoint])
   const due=questions.filter(q=>new Date(q.review.dueAt)<=new Date())
-  const openKnowledgePoint=(name:string)=>{setSearch(name);setTab('questions')}
+  const openKnowledgePoint=(name:string)=>{setFocusPoint(name);setTab('questions')}
+  const clearFocus=()=>setFocusPoint(null)
   return <div className="dsh-wq-shell">
     <header className="dsh-wq-header">
       <div><button className="dsh-wq-back" onClick={close} aria-label="返回">‹</button><div><h1>错题库</h1><p>收集 · 分析 · 复习 · 掌握</p></div></div>
-      <div className="dsh-wq-header-actions"><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="搜索题目、答案、标签、知识点…" /><button className="primary" onClick={()=>setEditing(null)}>＋ 新建错题</button></div>
+      <div className="dsh-wq-header-actions"><input value={search} onChange={e=>{setSearch(e.target.value);setFocusPoint(null)}} placeholder="搜索题目、答案、标签、知识点…" /><button className="primary" onClick={()=>setEditing(null)}>＋ 新建错题</button></div>
     </header>
     <nav className="dsh-wq-tabs">
       {([['dashboard','总览'],['questions',`错题 ${questions.length}`],['review',`复习 ${due.length}`],['graph','知识图谱']] as const).map(([id,label])=><button className={tab===id?'active':''} onClick={()=>setTab(id)} key={id}>{label}</button>)}
@@ -62,7 +64,7 @@ function WrongQuestionWorkspace({close}:{close:()=>void}){
       {error&&<div className="dsh-wq-error">{error}<button onClick={()=>void load()}>重试</button></div>}
       {loading&&<div className="dsh-wq-loading">正在加载…</div>}
       {!loading&&tab==='dashboard'&&<DashboardView d={dashboard} openTab={setTab}/>}
-      {!loading&&tab==='questions'&&<QuestionList qs={filtered} onSelect={setSelected} onRefresh={load}/>}
+      {!loading&&tab==='questions'&&<>{focusPoint&&<div className="kp-focus"><span>聚焦知识点：<b>{focusPoint}</b></span><button onClick={clearFocus}>✕ 清除</button></div>}<QuestionList qs={filtered} onSelect={setSelected} onRefresh={load}/></>}
       {!loading&&tab==='review'&&<ReviewView qs={due} onReviewed={load}/>}
       {!loading&&tab==='graph'&&<GraphView g={graph} onPick={openKnowledgePoint}/>}
     </main>
@@ -153,14 +155,53 @@ function QuestionEditor({question,close,saved}:{question:Question|null;close:()=
 function Field({label,value,set,rows=1}:{label:string;value:string;set:(v:string)=>void;rows?:number}){return <label>{label}{rows>1?<textarea rows={rows} value={value} onChange={e=>set(e.target.value)}/>:<input value={value} onChange={e=>set(e.target.value)}/>}</label>}
 
 function GraphView({g,onPick}:{g:any;onPick:(name:string)=>void}){
+  const [vp,setVp]=useState<{scale:number;tx:number;ty:number}>({scale:1,tx:0,ty:0})
+  const svgRef=React.useRef<SVGSVGElement>(null)
+  const dragRef=React.useRef<{x:number;y:number;on:boolean}>({x:0,y:0,on:false})
   if(!g)return null
   const layout=layoutGraph(g)
   const pairs=[...g.edges].sort((a:any,b:any)=>b.weight-a.weight).slice(0,8)
-  return <div className="graph-page"><h2>知识图谱</h2><p>节点大小代表错题数量，连线粗细代表两个知识点共同出现的频率。</p>
-    {layout.nodes.length?<div className="knowledge-map"><svg viewBox="0 0 720 480" role="img" aria-label="知识点关系图">
-      <g className="graph-lines">{layout.edges.map((e:any)=><line key={e.source.id+'-'+e.target.id} x1={e.source.x} y1={e.source.y} x2={e.target.x} y2={e.target.y} strokeWidth={Math.min(7,1+e.weight)} />)}</g>
-      <g>{layout.nodes.map((n:any)=><g className="graph-vertex" key={n.id} role="button" tabIndex={0} onClick={()=>onPick(n.id)} onKeyDown={e=>{if(e.key==='Enter'||e.key===' ')onPick(n.id)}}><circle cx={n.x} cy={n.y} r={n.r} fill={n.color}/><text x={n.x} y={n.y+n.r+16} textAnchor="middle">{n.id} ({n.count})</text><title>{n.id}：{n.count} 道，掌握 {n.mastery}%，待复习 {n.due}</title></g>)}</g>
-    </svg><aside><h3>关联最强的知识点对</h3>{pairs.map((e:any)=><button key={e.source+e.target} onClick={()=>onPick(e.source)}><span>{e.source}</span><i>×</i><span>{e.target}</span><b>{e.weight} 次</b></button>)}{!pairs.length&&<p>需要至少一道包含两个知识点的错题。</p>}</aside></div>:<div className="empty">添加知识点后会生成关系图。</div>}
+  const reset=()=>setVp({scale:1,tx:0,ty:0})
+  const zoomAt=(px:number,py:number,factor:number)=>{
+    setVp(v=>{
+      const scale=Math.min(4,Math.max(0.4,v.scale*factor))
+      const k=scale/v.scale
+      return {scale,tx:px-(px-v.tx)*k,ty:py-(py-v.ty)*k}
+    })
+  }
+  const onWheel=(e:React.WheelEvent)=>{
+    if(!svgRef.current)return
+    const rect=svgRef.current.getBoundingClientRect()
+    zoomAt(e.clientX-rect.left,e.clientY-rect.top,e.deltaY<0?1.12:1/1.12)
+  }
+  const onDown=(e:React.PointerEvent)=>{
+    dragRef.current={x:e.clientX,y:e.clientY,on:true}
+    svgRef.current?.setPointerCapture(e.pointerId)
+  }
+  const onMove=(e:React.PointerEvent)=>{
+    if(!dragRef.current.on)return
+    setVp(v=>({...v,tx:v.tx+e.clientX-dragRef.current.x,ty:v.ty+e.clientY-dragRef.current.y}))
+    dragRef.current={x:e.clientX,y:e.clientY,on:true}
+  }
+  const onUp=()=>{dragRef.current.on=false}
+  return <div className="graph-page"><h2>知识图谱</h2><p>节点大小代表错题数量，连线粗细代表两个知识点共同出现的频率，点击节点查看对应错题。</p>
+    {layout.nodes.length?<div className="knowledge-map">
+      <div className="graph-stage">
+        <svg ref={svgRef} viewBox="0 0 720 480" role="img" aria-label="知识点关系图" onWheel={onWheel} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} style={{cursor:dragRef.current.on?'grabbing':'grab'}}>
+          <g transform={`translate(${vp.tx} ${vp.ty}) scale(${vp.scale})`}>
+            <g className="graph-lines">{layout.edges.map((e:any)=><g key={e.source.id+'-'+e.target.id} className="graph-edge"><line x1={e.source.x} y1={e.source.y} x2={e.target.x} y2={e.target.y} strokeWidth={Math.min(7,1+e.weight)} /><text x={(e.source.x+e.target.x)/2} y={(e.source.y+e.target.y)/2}>{e.weight}</text></g>)}</g>
+            <g>{layout.nodes.map((n:any)=><g className="graph-vertex" key={n.id} role="button" tabIndex={0} onClick={(ev)=>{ev.stopPropagation();if(!dragRef.current.on)onPick(n.id)}} onPointerDown={(ev)=>ev.stopPropagation()} onKeyDown={e=>{if(e.key==='Enter'||e.key===' ')onPick(n.id)}}><circle cx={n.x} cy={n.y} r={n.r} fill={n.color}/><text x={n.x} y={n.y+n.r+16} textAnchor="middle">{n.id} ({n.count})</text><title>{n.id}：{n.count} 道，掌握 {n.mastery}%，待复习 {n.due}</title></g>)}</g>
+          </g>
+        </svg>
+        <div className="graph-controls">
+          <button onClick={(e)=>{const r=svgRef.current?.getBoundingClientRect();zoomAt((r?.width||720)/2,(r?.height||480)/2,1.2)}} aria-label="放大">＋</button>
+          <button onClick={(e)=>{const r=svgRef.current?.getBoundingClientRect();zoomAt((r?.width||720)/2,(r?.height||480)/2,1/1.2)}} aria-label="缩小">－</button>
+          <button onClick={reset} aria-label="重置">⟲</button>
+        </div>
+        <span className="graph-zoom">{Math.round(vp.scale*100)}%</span>
+      </div>
+      <aside><h3>关联最强的知识点对</h3>{pairs.map((e:any)=><button key={e.source+e.target} onClick={()=>onPick(e.source)}><span>{e.source}</span><i>×</i><span>{e.target}</span><b>{e.weight} 次</b></button>)}{!pairs.length&&<p>需要至少一道包含两个知识点的错题。</p>}</aside>
+    </div>:<div className="empty">添加知识点后会生成关系图。</div>}
   </div>
 }
 
