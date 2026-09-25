@@ -1,0 +1,12 @@
+[project]
+sub_id = "cbe5eb34"
+name = "dsh-wrong-question"
+requires = ["nodejs-24"]
+project_type = ""
+version = "0.1.9"
+
+[preview]
+preview_enable = "disabled"
+
+[subprojects]
+path = ["."]
