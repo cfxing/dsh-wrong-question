@@ -93,3 +93,5 @@ logs/
 
 # CodeGraph index
 .codegraph
+
+*.tgz
