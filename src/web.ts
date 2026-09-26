@@ -1,5 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { readFile, stat } from 'node:fs/promises'
+import { join, isAbsolute } from 'node:path'
+import { homedir } from 'node:os'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { RuntimeContextLike } from './runtime.js'
 import { scheduleReview } from './review.js'
@@ -19,6 +21,18 @@ function send(res:ServerResponse,status:number,body:unknown){res.writeHead(statu
 function error(res:ServerResponse,e:unknown){send(res,400,{error:e instanceof Error?e.message:String(e)})}
 async function body(req:IncomingMessage){let s='';for await(const c of req){s+=c;if(s.length>8_000_000)throw new Error('request body too large')}return s?JSON.parse(s):{}}
 function sameOrigin(req:IncomingMessage){const origin=req.headers.origin;if(!origin)return true;const host=req.headers.host??'';try{return new URL(origin).host===host}catch{return false}}
+
+/** 解析题目图片的磁盘绝对路径。imagePath 可能为绝对路径、相对进程 CWD 或相对 DSH_HOME；逐个候选基目录探测。 */
+async function resolveImagePath(imagePath:string):Promise<string|null>{
+  const candidates:string[]=[]
+  if(isAbsolute(imagePath)){candidates.push(imagePath)}
+  else{
+    const home=process.env.DSH_HOME||join(homedir(),'.dsh')
+    candidates.push(join(home,'wrong-question',imagePath),join(home,imagePath),join(process.cwd(),imagePath),join(process.cwd(),'wrong-question',imagePath))
+  }
+  for(const c of candidates){try{if((await stat(c)).isFile())return c}catch{/* 继续探测下一个 */}}
+  return null
+}
 
 export function registerWrongQuestionWeb(ctx:RuntimeContextLike,db:WrongQuestionDb,hybrid: { graph: KnowledgeGraph | null; embedder: Embedder } = { graph: null, embedder: undefined as unknown as Embedder }){
   const ws=ctx.webServer??ctx.get('webServer') as RuntimeContextLike['webServer']
@@ -44,8 +58,9 @@ export function registerWrongQuestionWeb(ctx:RuntimeContextLike,db:WrongQuestion
         const image=p.match(/^\/questions\/([^/]+)\/image$/)
         if(image&&req.method==='GET'){
           const q=db.getQuestion(decodeURIComponent(image[1]));if(!q?.imagePath)throw new Error('Question image not found')
-          const info=await stat(q.imagePath);if(!info.isFile()||info.size>8_000_000)throw new Error('Question image is invalid or too large')
-          const data=await readFile(q.imagePath);const type=imageMime(data);if(!type)throw new Error('Unsupported question image')
+          const abs=await resolveImagePath(q.imagePath);if(!abs)throw new Error('Question image file not found')
+          const info=await stat(abs);if(!info.isFile()||info.size>8_000_000)throw new Error('Question image is invalid or too large')
+          const data=await readFile(abs);const type=imageMime(data);if(!type)throw new Error('Unsupported question image')
           res.writeHead(200,{'content-type':type,'content-length':String(data.length),'cache-control':'private, max-age=300'});res.end(data);return
         }
         if(m&&req.method==='GET'){const q=db.getQuestion(decodeURIComponent(m[1]));if(!q)throw new Error('Question not found');return send(res,200,q)}
