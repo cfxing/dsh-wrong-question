@@ -6,8 +6,8 @@ import clientCss from './client.css'
 const PLUGIN_ID='dsh-wrong-question'
 const API='/wrong-question-control/v1'
 type Tab='dashboard'|'questions'|'review'|'graph'
-type Artifact={kind:'image'|'video'|'html';title?:string;source?:string;content?:string;poster?:string}
-type Question={id:string;content:string;answer:string;source?:string;imagePath?:string;imageData?:string;artifacts:Artifact[];ocrText?:string;knowledgePoints:string[];tags:string[];difficulty:number;mistakeCause?:string;analysis?:string;followupQuestion?:string;createdAt:string;updatedAt:string;review:{reps:number;ease:number;intervalDays:number;dueAt:string;lastReviewedAt?:string}}
+type Artifact={id?:string;kind:'image'|'video'|'html';title?:string;source?:string;content?:string;poster?:string}
+type Question={id:string;content:string;answer:string;source?:string;imagePath?:string;imageData?:string;imageMediaId?:string;artifacts:Artifact[];ocrText?:string;knowledgePoints:string[];tags:string[];difficulty:number;mistakeCause?:string;analysis?:string;followupQuestion?:string;createdAt:string;updatedAt:string;review:{reps:number;ease:number;intervalDays:number;dueAt:string;lastReviewedAt?:string}}
 
 export const inject=['slots','layout']
 
@@ -129,10 +129,10 @@ function MediaGallery({q,compact}:{q:Question;compact?:boolean}){
   if(!primary&&!artifacts.length)return q.imagePath?<div className="media-missing">原题图片路径无法在浏览器中访问：{q.imagePath}</div>:null
   return <section className={`artifact-gallery${compact?' compact':''}`}>{!compact&&<h3>原题与互动内容</h3>}{primary&&<img className="question-image" src={primary} alt="原题图片"/>}{artifacts.map((a,i)=>{
     const title=a.title||`${a.kind} ${i+1}`
-    if(a.kind==='image'){const src=mediaUrl(a.source,'image');return src?<figure key={i}><img className="question-image" src={src} alt={title}/>{compact?null:<figcaption>{title}</figcaption>}</figure>:null}
-    if(a.kind==='video'){const src=mediaUrl(a.source,'video');return src?<figure key={i}><video className="question-video" src={src} poster={mediaUrl(a.poster,'image')} controls preload="metadata"/>{compact?null:<figcaption>{title}</figcaption>}</figure>:null}
+    if(a.kind==='image'){const src=mediaUrl(a.source,'image',q.id,a.id);return src?<figure key={i}><img className="question-image" src={src} alt={title}/>{compact?null:<figcaption>{title}</figcaption>}</figure>:null}
+    if(a.kind==='video'){const src=mediaUrl(a.source,'video',q.id,a.id);return src?<figure key={i}><video className="question-video" src={src} poster={mediaUrl(a.poster,'image')} controls preload="metadata"/>{compact?null:<figcaption>{title}</figcaption>}</figure>:null}
     if(a.kind==='html'&&a.content)return <figure key={i}><iframe className="question-html" title={title} srcDoc={a.content} sandbox="allow-scripts"/>{compact?null:<figcaption>{title}</figcaption>}</figure>
-    const src=mediaUrl(a.source,'html');return src?<figure key={i}><iframe className="question-html" title={title} src={src} sandbox="allow-scripts"/>{compact?null:<figcaption>{title}</figcaption>}</figure>:null
+    const src=mediaUrl(a.source,'html',q.id,a.id);return src?<figure key={i}><iframe className="question-html" title={title} src={src} sandbox="allow-scripts"/>{compact?null:<figcaption>{title}</figcaption>}</figure>:null
   })}</section>
 }
 
@@ -275,12 +275,13 @@ function message(e:unknown){return e instanceof Error?e.message:String(e)}
 function labelGrade(g:string){return ({again:'Again',hard:'Hard',good:'Good',easy:'Easy'} as Record<string,string>)[g]}
 function nextHint(q:Question,g:string){if(g==='again')return'稍后重来';if(q.review.reps===0)return g==='easy'?'约 1 天':'1 天';const factor=g==='hard'?1.2:g==='easy'?1.3*q.review.ease:q.review.ease;return `约 ${Math.max(1,Math.round(Math.max(1,q.review.intervalDays)*factor))} 天`}
 function readImage(file:File){return new Promise<string>((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result));reader.onerror=()=>reject(reader.error);reader.readAsDataURL(file)})}
-function mediaUrl(value:unknown,kind:'image'|'video'|'html'){
+function mediaUrl(value:unknown,kind:'image'|'video'|'html',questionId?:string,mediaId?:string){
   if(typeof value!=='string'||!value.trim())return undefined
   const url=value.trim()
+  if(url.startsWith('/')&&questionId&&mediaId)return `${API}/questions/${encodeURIComponent(questionId)}/media/${encodeURIComponent(mediaId)}`
   if(url.startsWith('/')||/^https?:\/\//i.test(url))return url
   if(kind==='image'&&/^data:image\/(png|jpeg|webp|gif);base64,/i.test(url))return url
   if(kind==='video'&&/^data:video\/(mp4|webm|ogg);base64,/i.test(url))return url
   return undefined
 }
-function questionImage(q:Question){return mediaUrl(q.imageData,'image')||mediaUrl(q.imagePath,'image')||(q.imagePath?`${API}/questions/${encodeURIComponent(q.id)}/image`:undefined)}
+function questionImage(q:Question){return mediaUrl(q.imageData,'image')||(q.imagePath&&q.imageMediaId?mediaUrl(q.imagePath,'image',q.id,q.imageMediaId):undefined)}
