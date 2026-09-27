@@ -15,6 +15,7 @@ export interface Question {
   source?: string
   imagePath?: string
   imageData?: string
+  imageMediaId?: string
   artifacts: QuestionArtifact[]
   ocrText?: string
   knowledgePoints: string[]
@@ -29,6 +30,7 @@ export interface Question {
 }
 
 export interface QuestionArtifact {
+  id?: string
   kind: 'image' | 'video' | 'html'
   title?: string
   source?: string
