@@ -2,165 +2,94 @@ import { Database as KuzuDb, Connection as KuzuConn } from 'kuzu'
 import type { Question } from './domain.js'
 import type { Embedder } from './embedding.js'
 
-export interface KGraphOptions {
-  path: string
-  embedder: Embedder
-}
+export interface KGraphOptions { path:string; embedder:Embedder }
+export interface VectorHit { id:string; distance:number }
+export interface GraphTraversalHit { id:string; path:string[]; hops:number }
+const DEFAULT_TOP_K=20
 
-export interface VectorHit {
-  id: string
-  distance: number
-}
-
-export interface GraphTraversalHit {
-  id: string
-  /** 该题命中的知识点链（含起点），用于解释推理路径。 */
-  path: string[]
-  hops: number
-}
-
-const DEFAULT_TOP_K = 20
-
-/**
- * Kuzu 图存储层：错题本的知识图谱。
- * - 节点：QuestionNode(id, embedding[FLOAT[dim]], source, updatedAt)；WordNode(name) 知识点。
- * - 边：QuestionNode -[:HAS_POINT]-> WordNode。
- * - 向量召回：在 QuestionNode.embedding 建 HNSW 余弦索引（Kuzu 0.11.3 vector 扩展）。
- * - 图遍历：从知识点出发，沿 HAS_POINT 反查相关错题，支持共现多跳。
- *
- * Kuzu 是嵌入式图库，数据落在工作目录下的 `knowledge.kuzu`，无需服务进程。
- * 分工：词法落在 SQLite FTS；向量与图谱落在 Kuzu。
- */
 export class KnowledgeGraph {
-  readonly db: KuzuDb
-  readonly conn: KuzuConn
-  private readonly embedder: Embedder
-  ready: Promise<void>
+  readonly db:KuzuDb
+  readonly conn:KuzuConn
+  private readonly embedder:Embedder
+  ready:Promise<void>
 
-  constructor(options: KGraphOptions) {
-    this.embedder = options.embedder
-    this.db = new KuzuDb(options.path)
-    this.conn = new KuzuConn(this.db)
-    this.ready = this.init()
-  }
+  constructor(options:KGraphOptions){this.embedder=options.embedder;this.db=new KuzuDb(options.path);this.conn=new KuzuConn(this.db);this.ready=this.init()}
 
-  private async init() {
+  private async init(){
     await this.conn.init()
-    // 0.11.3 内置向量/数组函数（ARRAY_COSINE_SIMILARITY 等）可直接使用。
-    // 注意：HNSW 向量索引（CREATE_VECTOR_INDEX）依赖 vector 扩展，Node 绑定当前无法加载，
-    // 故向量召回退化为全表余弦扫描——对错题本小数据规模足够。
-    await this.conn.query(`
-      CREATE NODE TABLE IF NOT EXISTS QuestionNode (
-        id STRING PRIMARY KEY,
-        text STRING,
-        embedding FLOAT[${this.embedder.dim}],
-        source STRING,
-        updatedAt STRING
-      )
-    `)
-    await this.conn.query(`
-      CREATE NODE TABLE IF NOT EXISTS WordNode (
-        name STRING PRIMARY KEY
-      )
-    `)
-    await this.conn.query(`
-      CREATE REL TABLE IF NOT EXISTS HAS_POINT (FROM QuestionNode TO WordNode)
-    `)
+    await this.conn.query('CREATE NODE TABLE IF NOT EXISTS Question (id STRING PRIMARY KEY,text STRING,embedding FLOAT['+this.embedder.dim+'],source STRING,updatedAt STRING)')
+    await this.conn.query('CREATE NODE TABLE IF NOT EXISTS KnowledgePoint (name STRING PRIMARY KEY)')
+    await this.conn.query('CREATE NODE TABLE IF NOT EXISTS Tag (name STRING PRIMARY KEY)')
+    await this.conn.query('CREATE NODE TABLE IF NOT EXISTS MistakeCause (name STRING PRIMARY KEY)')
+    await this.conn.query('CREATE REL TABLE IF NOT EXISTS HAS_POINT (FROM Question TO KnowledgePoint)')
+    await this.conn.query('CREATE REL TABLE IF NOT EXISTS HAS_TAG (FROM Question TO Tag)')
+    await this.conn.query('CREATE REL TABLE IF NOT EXISTS HAS_CAUSE (FROM Question TO MistakeCause)')
+    await this.conn.query('CREATE REL TABLE IF NOT EXISTS CO_OCCURS (FROM KnowledgePoint TO KnowledgePoint, weight INT32)')
+    await this.conn.query('CREATE REL TABLE IF NOT EXISTS SIMILAR_TO (FROM Question TO Question, score DOUBLE)')
   }
 
-  async close() {
-    await this.conn.close()
-    this.db.close()
-  }
+  async close(){await this.conn.close();this.db.close()}
+  private esc(s:string){return s.replace(/'/g,"''")}
+  private async q(text:string):Promise<Record<string,unknown>[]> {const rs=await this.conn.query(text);const res=Array.isArray(rs)?rs[0]:rs;return(await res.getAll()) as Record<string,unknown>[]}
 
-  private esc(s: string) {
-    return s.replace(/'/g, "''")
-  }
-
-  /** 写入/更新一道错题：QuestionNode(含向量) + 关联知识点 WordNode + HAS_POINT 边。 */
-  async upsertQuestion(q: Question) {
-    const text = [q.content, q.answer, q.analysis, q.ocrText, ...q.knowledgePoints, ...q.tags]
-      .filter((x): x is string => typeof x === 'string' && x.length > 0)
-      .join(' ')
-    const vec = await this.embedder.embed(text)
-    const vecLit = `[${vec.join(',')}]`
-    await this.q(`MERGE (qn:QuestionNode {id: '${this.esc(q.id)}'})
-      SET qn.text = '${this.esc(text)}', qn.embedding = ${vecLit}, qn.source = '${this.esc(q.source ?? '')}', qn.updatedAt = '${this.esc(q.updatedAt)}'`)
-    // 清旧边，重建知识点关联，避免重复。
-    await this.q(`MATCH (qn:QuestionNode {id: '${this.esc(q.id)}'})-[h:HAS_POINT]->(:WordNode) DELETE h`).catch(() => {})
-    for (const kp of q.knowledgePoints) {
-      const name = kp.trim()
-      if (!name) continue
-      await this.q(`MERGE (w:WordNode {name: '${this.esc(name)}'})`)
-      await this.q(`MATCH (qn:QuestionNode {id: '${this.esc(q.id)}'}), (w:WordNode {name: '${this.esc(name)}'})
-        MERGE (qn)-[:HAS_POINT]->(w)`)
+  async upsertQuestion(q:Question){
+    const text=[q.content,q.answer,q.analysis,q.mistakeCause,q.ocrText,...q.knowledgePoints,...q.tags].filter((x):x is string=>!!x).join(' ')
+    const vec=await this.embedder.embed(text),lit='['+vec.join(',')+']',id=this.esc(q.id)
+    await this.q("MERGE (n:Question {id:'"+id+"'}) SET n.text='"+this.esc(text)+"', n.embedding="+lit+", n.source='"+this.esc(q.source??'')+"', n.updatedAt='"+this.esc(q.updatedAt)+"'")
+    for(const rel of ['HAS_POINT','HAS_TAG','HAS_CAUSE'])await this.q("MATCH (n:Question {id:'"+id+"'})-[r:"+rel+"]->() DELETE r").catch(()=>{})
+    for(const name of [...new Set(q.knowledgePoints.map(x=>x.trim()).filter(Boolean))]){
+      await this.q("MERGE (k:KnowledgePoint {name:'"+this.esc(name)+"'})")
+      await this.q("MATCH (n:Question {id:'"+id+"'}),(k:KnowledgePoint {name:'"+this.esc(name)+"'}) MERGE (n)-[:HAS_POINT]->(k)")
+    }
+    for(const name of [...new Set(q.tags.map(x=>x.trim()).filter(Boolean))]){
+      await this.q("MERGE (t:Tag {name:'"+this.esc(name)+"'})")
+      await this.q("MATCH (n:Question {id:'"+id+"'}),(t:Tag {name:'"+this.esc(name)+"'}) MERGE (n)-[:HAS_TAG]->(t)")
+    }
+    if(q.mistakeCause?.trim()){
+      const name=q.mistakeCause.trim()
+      await this.q("MERGE (c:MistakeCause {name:'"+this.esc(name)+"'})")
+      await this.q("MATCH (n:Question {id:'"+id+"'}),(c:MistakeCause {name:'"+this.esc(name)+"'}) MERGE (n)-[:HAS_CAUSE]->(c)")
+    }
+    for(let i=0;i<q.knowledgePoints.length;i++)for(let j=i+1;j<q.knowledgePoints.length;j++){
+      const a=q.knowledgePoints[i].trim(),b=q.knowledgePoints[j].trim();if(!a||!b||a===b)continue
+      await this.q("MERGE (a:KnowledgePoint {name:'"+this.esc(a)+"'})");await this.q("MERGE (b:KnowledgePoint {name:'"+this.esc(b)+"'})")
+      await this.q("MATCH (a:KnowledgePoint {name:'"+this.esc(a)+"'}),(b:KnowledgePoint {name:'"+this.esc(b)+"'}) MERGE (a)-[r:CO_OCCURS]->(b) SET r.weight=coalesce(r.weight,0)+1")
+      await this.q("MATCH (a:KnowledgePoint {name:'"+this.esc(b)+"'}),(b:KnowledgePoint {name:'"+this.esc(a)+"'}) MERGE (a)-[r:CO_OCCURS]->(b) SET r.weight=coalesce(r.weight,0)+1")
     }
   }
 
-  /** 删除错题（QuestionNode 及出边级联删除）。 */
-  async deleteQuestion(id: string) {
-    await this.q(`MATCH (qn:QuestionNode {id: '${this.esc(id)}'}) DELETE qn`).catch(() => {})
+  async deleteQuestion(id:string){await this.q("MATCH (n:Question {id:'"+this.esc(id)+"'}) DETACH DELETE n").catch(()=>{})}
+
+  async rebuild(questions:Question[]){
+    for(const t of ['Question','KnowledgePoint','Tag','MistakeCause'])await this.q('MATCH (n:'+t+') DETACH DELETE n').catch(()=>{})
+    for(const q of questions)await this.upsertQuestion(q)
   }
 
-  /** 全量重建：清空节点后按现有错题重建。 */
-  async rebuild(questions: Question[]) {
-    for (const t of ['QuestionNode', 'WordNode']) {
-      await this.q(`MATCH (n:${t}) DELETE n`).catch(() => {})
+  async vectorSearch(queryText:string,topK=DEFAULT_TOP_K):Promise<VectorHit[]>{
+    const vec=await this.embedder.embed(queryText),cast="CAST(["+vec.join(',')+"], 'FLOAT["+this.embedder.dim+"]')"
+    const rows=await this.q("MATCH (n:Question) WHERE n.embedding IS NOT NULL WITH n.id AS id, ARRAY_COSINE_SIMILARITY(n.embedding,"+cast+") AS sim ORDER BY sim DESC LIMIT "+Math.max(1,Math.min(100,topK))+" RETURN id,sim")
+    return rows.map(r=>({id:String(r.id),distance:1-Number(r.sim)}))
+  }
+
+  async findKnowledgePoints(query:string,topK=20):Promise<string[]>{
+    const terms=query.normalize('NFKC').toLocaleLowerCase().match(/[\\p{L}\\p{N}]+/gu)??[]
+    const rows=await this.q('MATCH (k:KnowledgePoint) RETURN k.name AS name').catch(()=>[])
+    const scored=(rows as Record<string,unknown>[]).map(r=>{const name=String(r.name),low=name.toLocaleLowerCase();let score=0;for(const t of terms)if(low.includes(t)||t.includes(low))score+=1;return{name,score}}).filter(x=>x.score>0).sort((a,b)=>b.score-a.score)
+    return scored.slice(0,topK).map(x=>x.name)
+  }
+
+  async graphTraverse(startKnowledge:string[],maxHops=2,topK=DEFAULT_TOP_K):Promise<GraphTraversalHit[]>{
+    const seeds=[...new Set(startKnowledge.map(s=>s.trim()).filter(Boolean))];if(!seeds.length)return[]
+    const seen=new Map<string,GraphTraversalHit>();let boundary=seeds
+    for(let hop=1;hop<=maxHops&&boundary.length;hop++){
+      const names=boundary.map(n=>"'"+this.esc(n)+"'").join(',')
+      const rows=await this.q("MATCH (q:Question)-[:HAS_POINT]->(k:KnowledgePoint) WHERE k.name IN ["+names+"] RETURN DISTINCT q.id AS id,k.name AS kp").catch(()=>[])
+      for(const r of rows){const id=String(r.id),kp=String(r.kp),old=seen.get(id);if(old){if(!old.path.includes(kp))old.path.push(kp);old.hops=Math.max(old.hops,hop)}else seen.set(id,{id,path:[kp],hops:hop})}
+      const next=await this.q("MATCH (a:KnowledgePoint)-[:CO_OCCURS]->(b:KnowledgePoint) WHERE a.name IN ["+names+"] RETURN DISTINCT b.name AS name").catch(()=>[])
+      boundary=[...new Set((next as Record<string,unknown>[]).map(r=>String(r.name)).filter(x=>x))]
     }
-    for (const q of questions) await this.upsertQuestion(q)
-  }
-
-  private async q(text: string): Promise<Record<string, unknown>[]> {
-    const rs = await this.conn.query(text)
-    const res = Array.isArray(rs) ? rs[0] : rs
-    return (await res.getAll()) as Record<string, unknown>[]
-  }
-
-  /** 向量召回：对查询文本 embedding 做 top-k 余弦近邻（全表扫描；Node 绑定无 HNSW 索引）。 */
-  async vectorSearch(queryText: string, topK: number = DEFAULT_TOP_K): Promise<VectorHit[]> {
-    const vec = await this.embedder.embed(queryText)
-    const vecLit = `[${vec.join(',')}]`
-    const cast = `CAST(${vecLit}, 'FLOAT[${this.embedder.dim}]')`
-    const rs = await this.q(`MATCH (qn:QuestionNode)
-      WHERE qn.embedding IS NOT NULL
-      WITH qn.id AS qid, ARRAY_COSINE_SIMILARITY(qn.embedding, ${cast}) AS sim
-      ORDER BY sim DESC
-      LIMIT ${topK}
-      RETURN qid, sim`)
-    return (rs as Record<string, unknown>[]).map((r) => ({ id: String(r.qid), distance: 1 - Number(r.sim) }))
-  }
-
-  /** 图遍历：从起点知识点出发，沿 HAS_POINT 反查相关错题；每跳扩展共现知识点。 */
-  async graphTraverse(startKnowledge: string[], maxHops = 2, topK: number = DEFAULT_TOP_K): Promise<GraphTraversalHit[]> {
-    const seen = new Map<string, GraphTraversalHit>()
-    let boundary = [...new Set(startKnowledge.map((s) => s.trim()).filter(Boolean))]
-    if (boundary.length === 0) return []
-    for (let hop = 1; hop <= maxHops && boundary.length > 0; hop++) {
-      const names = boundary.map((n) => `'${this.esc(n)}'`).join(',')
-      const rs = await this.q(`MATCH (qn:QuestionNode)-[:HAS_POINT]->(w:WordNode)
-        WHERE w.name IN [${names}]
-        RETURN DISTINCT qn.id AS id, w.name AS kp`).catch(() => null)
-      if (!rs) continue
-      const rows = rs as Record<string, unknown>[]
-      for (const r of rows) {
-        const id = String(r.id)
-        const kp = String(r.kp)
-        const prev = seen.get(id)
-        if (prev) {
-          if (!prev.path.includes(kp)) prev.path.push(kp)
-          if (hop > prev.hops) prev.hops = hop
-        } else {
-          seen.set(id, { id, path: [kp], hops: hop })
-        }
-      }
-      // 下一跳边界：本跳出现过的知识点（去重），形成共现扩散。
-      boundary = [...new Set(rows.map((r) => String(r.kp)))]
-    }
-    return [...seen.values()].slice(0, topK)
+    return[...seen.values()].slice(0,topK)
   }
 }
 
-/** 全量投影：将 SQLite 中的全部错题同步到 Kuzu 图。 */
-export function projectAll(graph: KnowledgeGraph, questions: Question[]): Promise<void> {
-  return graph.rebuild(questions)
-}
+export function projectAll(graph:KnowledgeGraph,questions:Question[]):Promise<void>{return graph.rebuild(questions)}
