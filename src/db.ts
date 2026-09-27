@@ -17,7 +17,7 @@ function parseQuestion(row: any): Question {
   const image = media.find((m:any) => m.kind === 'image')
   return {
     id:row.id, content:row.content, answer:row.answer ?? '', source:row.source ?? undefined,
-    imagePath:image?.source ?? undefined, imageData:image?.content?.startsWith('data:image/') ? image.content : undefined,
+    imagePath:image?.source ?? undefined, imageData:image?.content?.startsWith('data:image/') ? image.content : undefined, imageMediaId:image?.id ?? undefined,
     artifacts, ocrText:row.ocr_text ?? undefined, knowledgePoints:parseArray(row.__knowledge_points),
     tags:parseArray(row.__tags), difficulty:Number(row.difficulty ?? 3), mistakeCause:row.mistake_cause ?? undefined,
     analysis:row.analysis ?? undefined, followupQuestion:row.followup_question ?? undefined,
