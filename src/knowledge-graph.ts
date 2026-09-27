@@ -50,15 +50,20 @@ export class KnowledgeGraph {
       await this.q("MERGE (c:MistakeCause {name:'"+this.esc(name)+"'})")
       await this.q("MATCH (n:Question {id:'"+id+"'}),(c:MistakeCause {name:'"+this.esc(name)+"'}) MERGE (n)-[:HAS_CAUSE]->(c)")
     }
-    for(let i=0;i<q.knowledgePoints.length;i++)for(let j=i+1;j<q.knowledgePoints.length;j++){
-      const a=q.knowledgePoints[i].trim(),b=q.knowledgePoints[j].trim();if(!a||!b||a===b)continue
-      await this.q("MERGE (a:KnowledgePoint {name:'"+this.esc(a)+"'})");await this.q("MERGE (b:KnowledgePoint {name:'"+this.esc(b)+"'})")
-      await this.q("MATCH (a:KnowledgePoint {name:'"+this.esc(a)+"'}),(b:KnowledgePoint {name:'"+this.esc(b)+"'}) MERGE (a)-[r:CO_OCCURS]->(b) SET r.weight=coalesce(r.weight,0)+1")
-      await this.q("MATCH (a:KnowledgePoint {name:'"+this.esc(b)+"'}),(b:KnowledgePoint {name:'"+this.esc(a)+"'}) MERGE (a)-[r:CO_OCCURS]->(b) SET r.weight=coalesce(r.weight,0)+1")
-    }
+    await this.rebuildCoOccurs()
   }
 
-  async deleteQuestion(id:string){await this.q("MATCH (n:Question {id:'"+this.esc(id)+"'}) DETACH DELETE n").catch(()=>{})}
+  private async rebuildCoOccurs(){
+    await this.q('MATCH ()-[r:CO_OCCURS]->() DELETE r').catch(()=>{})
+    const rows=await this.q('MATCH (q:Question)-[:HAS_POINT]->(k:KnowledgePoint) RETURN q.id AS id,k.name AS name').catch(()=>[])
+    const byQuestion=new Map<string,string[]>()
+    for(const r of rows as Record<string,unknown>[]){const id=String(r.id),name=String(r.name);const a=byQuestion.get(id)??[];a.push(name);byQuestion.set(id,a)}
+    const weights=new Map<string,number>()
+    for(const points of byQuestion.values()){const ps=[...new Set(points)].sort();for(let i=0;i<ps.length;i++)for(let j=i+1;j<ps.length;j++){const a=ps[i],b=ps[j],key=a+'\\0'+b;weights.set(key,(weights.get(key)??0)+1)}}
+    for(const [key,weight] of weights){const [a,b]=key.split('\\0');await this.q("MATCH (a:KnowledgePoint {name:'"+this.esc(a)+"'}),(b:KnowledgePoint {name:'"+this.esc(b)+"'}) MERGE (a)-[r:CO_OCCURS]->(b) SET r.weight="+weight);await this.q("MATCH (a:KnowledgePoint {name:'"+this.esc(b)+"'}),(b:KnowledgePoint {name:'"+this.esc(a)+"'}) MERGE (a)-[r:CO_OCCURS]->(b) SET r.weight="+weight)}
+  }
+
+  async deleteQuestion(id:string){await this.q("MATCH (n:Question {id:'"+this.esc(id)+"'}) DETACH DELETE n").catch(()=>{});await this.rebuildCoOccurs().catch(()=>{})}
 
   async rebuild(questions:Question[]){
     for(const t of ['Question','KnowledgePoint','Tag','MistakeCause'])await this.q('MATCH (n:'+t+') DETACH DELETE n').catch(()=>{})
