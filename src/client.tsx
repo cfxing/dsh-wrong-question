@@ -155,7 +155,7 @@ function Field({label,value,set,rows=1}:{label:string;value:string;set:(v:string
 
 function GraphView({g,onPick}:{g:any;onPick:(name:string)=>void}){
   const [vp,setVp]=useState({scale:1,tx:0,ty:0}),[pos,setPos]=useState<Record<string,{x:number;y:number}>>({}),[hover,setHover]=useState<string|null>(null)
-  const svgRef=React.useRef<SVGSVGElement>(null),dragRef=React.useRef<GraphDrag>({type:'none'})
+  const svgRef=React.useRef<SVGSVGElement>(null),dragRef=React.useRef<GraphDrag>({type:'none'}),lastNodeDragRef=React.useRef(false)
   if(!g)return null
   const layout=useMemo(()=>layoutGraph(g),[g]),pairs=[...g.edges].sort((a:any,b:any)=>b.weight-a.weight).slice(0,8),at=(n:any)=>pos[n.id]||{x:n.x,y:n.y}
   const fit=()=>fitGraph(layout.nodes),key=layout.nodes.map((n:any)=>n.id).join('|')
@@ -165,9 +165,9 @@ function GraphView({g,onPick}:{g:any;onPick:(name:string)=>void}){
   const zoomAt=(x:number,y:number,f:number)=>{const p=toView(x,y);setVp(v=>{const scale=Math.min(MAX_SCALE,Math.max(MIN_SCALE,v.scale*f)),k=scale/v.scale;return{scale,tx:p.x-(p.x-v.tx)*k,ty:p.y-(p.y-v.ty)*k}})}
   const down=(e:React.PointerEvent)=>{if(e.button!==0||dragRef.current.type!=='none')return;const p=toView(e.clientX,e.clientY);dragRef.current={type:'canvas',pointerId:e.pointerId,startX:p.x,startY:p.y,tx:vp.tx,ty:vp.ty,moved:false};e.currentTarget.setPointerCapture(e.pointerId)}
   const move=(e:React.PointerEvent)=>{const d=dragRef.current;if(d.type==='node'){const p=toWorld(e.clientX,e.clientY),dx=p.x-d.x,dy=p.y-d.y;if(Math.hypot(dx,dy)>DRAG_THRESHOLD)d.moved=true;const n=layout.nodes.find((x:any)=>x.id===d.id);if(n){const r=n.r+20;setPos(o=>({...o,[d.id]:{x:clamp(d.nx+dx,r,VIEW_W-r),y:clamp(d.ny+dy,r,VIEW_H-r)}}))}return}if(d.type==='canvas'){const p=toView(e.clientX,e.clientY),dx=p.x-d.x,dy=p.y-d.y;if(Math.hypot(dx,dy)>DRAG_THRESHOLD)d.moved=true;setVp(v=>({...v,tx:d.tx+dx,ty:d.ty+dy}))}}
-  const up=(e:React.PointerEvent)=>{const d=dragRef.current;if(d.type!=='none'&&e.currentTarget.hasPointerCapture?.(d.pointerId))e.currentTarget.releasePointerCapture(d.pointerId);dragRef.current={type:'none'};setHover(null)}
+  const up=(e:React.PointerEvent)=>{const d=dragRef.current;lastNodeDragRef.current=d.type==='node'&&d.moved;if(d.type!=='none'&&e.currentTarget.hasPointerCapture?.(d.pointerId))e.currentTarget.releasePointerCapture(d.pointerId);dragRef.current={type:'none'};setHover(null)}
   const nodeDown=(e:React.PointerEvent,n:any)=>{e.stopPropagation();e.preventDefault();const p=toWorld(e.clientX,e.clientY),a=at(n);dragRef.current={type:'node',pointerId:e.pointerId,id:n.id,d:p.x,dy:p.y,nx:a.x,ny:a.y,moved:false};e.currentTarget.setPointerCapture(e.pointerId)}
-  const nodeClick=(e:React.MouseEvent,n:any)=>{e.stopPropagation();const d=dragRef.current;if(d.type==='node'&&d.id===n.id&&d.moved)return;onPick(n.id)}
+  const nodeClick=(e:React.MouseEvent,n:any)=>{e.stopPropagation();if(lastNodeDragRef.current){lastNodeDragRef.current=false;return}onPick(n.id)}
   const zoomButton=(f:number)=>{const r=svgRef.current?.getBoundingClientRect();if(r)zoomAt(r.left+r.width/2,r.top+r.height/2,f)}
   return <div className="graph-page"><h2>知识图谱</h2><p>节点大小代表错题数量，连线粗细代表共同出现的频率。可拖拽节点、空白区域平移，滚轮缩放，点击节点查看错题，悬停高亮关联。</p>
     {layout.nodes.length?<div className="knowledge-map"><div className="graph-stage"><svg ref={svgRef} viewBox={\`0 0 \${VIEW_W} \${VIEW_H}\`} role="img" aria-label="知识点关系图" onWheel={e=>{e.preventDefault();zoomAt(e.clientX,e.clientY,e.deltaY<0?1.12:1/1.12)}} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
