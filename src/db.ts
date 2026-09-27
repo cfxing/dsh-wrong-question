@@ -101,7 +101,7 @@ export class WrongQuestionDb {
       this.db.prepare('DELETE FROM question_media WHERE question_id=?').run(id)
       let order=0;const path=input.imagePath??old?.imagePath,data=input.imageData??old?.imageData
       if(path)this.db.prepare('INSERT INTO question_media(id,question_id,kind,source,sort_order,created_at) VALUES(?,?,?,?,?,?)').run(crypto.randomUUID(),id,'image',path,order++,now)
-      if(data)this.db.prepare('INSERT INTO question_media(id,question_id,kind,content,mime_type,sort_order,created_at) VALUES(?,?,?,?,?,?,?)').run(crypto.randomUUID(),id,'image',data,data.match(/^data:(image\\/[^;]+);/i)?.[1]??null,order++,now)
+      if(data)this.db.prepare('INSERT INTO question_media(id,question_id,kind,content,mime_type,sort_order,created_at) VALUES(?,?,?,?,?,?,?)').run(crypto.randomUUID(),id,'image',data,data.match(/^data:(image\/[^;]+);/i)?.[1] ?? null,order++,now)
       for(const a of input.artifacts??old?.artifacts??[])this.db.prepare('INSERT INTO question_media(id,question_id,kind,title,source,content,poster,sort_order,created_at) VALUES(?,?,?,?,?,?,?,?,?)').run(crypto.randomUUID(),id,a.kind,a.title??null,a.source??null,a.content??null,a.poster??null,order++,now)
       this.db.prepare('DELETE FROM question_knowledge_points WHERE question_id=?').run(id)
       for(const name of [...new Set((input.knowledgePoints??old?.knowledgePoints??[]).map(String).map(x=>x.trim()).filter(Boolean))])this.db.prepare('INSERT INTO question_knowledge_points(question_id,knowledge_point_id,importance) VALUES(?,?,?)').run(id,this.ensure('knowledge_points',name,now),1)
