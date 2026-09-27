@@ -42,25 +42,106 @@ export class WrongQuestionDb {
     const version=Number((this.db.prepare('PRAGMA user_version').get() as any)?.user_version ?? 0)
     if(version===SCHEMA_VERSION)return
     this.db.exec('DROP TABLE IF EXISTS questions_fts; DROP TABLE IF EXISTS review_logs; DROP TABLE IF EXISTS review_states; DROP TABLE IF EXISTS question_media; DROP TABLE IF EXISTS question_mistake_causes; DROP TABLE IF EXISTS mistake_causes; DROP TABLE IF EXISTS question_tags; DROP TABLE IF EXISTS tags; DROP TABLE IF EXISTS question_knowledge_points; DROP TABLE IF EXISTS knowledge_points; DROP TABLE IF EXISTS questions;')
-    this.db.exec(
-      'CREATE TABLE questions (' +
-      'id TEXT PRIMARY KEY, content TEXT NOT NULL, answer TEXT NOT NULL DEFAULT "", ocr_text TEXT, source TEXT, ' +
-      'difficulty INTEGER NOT NULL DEFAULT 3 CHECK (difficulty BETWEEN 1 AND 5), mistake_cause TEXT, analysis TEXT, followup_question TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);' +
-      'CREATE TABLE question_media (id TEXT PRIMARY KEY, question_id TEXT NOT NULL REFERENCES questions(id) ON DELETE CASCADE, ' +
-      'kind TEXT NOT NULL CHECK (kind IN ('image','video','html','text')), title TEXT, source TEXT, content TEXT, mime_type TEXT, poster TEXT, sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);' +
-      'CREATE TABLE knowledge_points (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, description TEXT, parent_id TEXT REFERENCES knowledge_points(id) ON DELETE SET NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);' +
-      'CREATE TABLE question_knowledge_points (question_id TEXT NOT NULL REFERENCES questions(id) ON DELETE CASCADE, knowledge_point_id TEXT NOT NULL REFERENCES knowledge_points(id) ON DELETE CASCADE, importance REAL NOT NULL DEFAULT 1.0, PRIMARY KEY(question_id,knowledge_point_id));' +
-      'CREATE TABLE tags (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL);' +
-      'CREATE TABLE question_tags (question_id TEXT NOT NULL REFERENCES questions(id) ON DELETE CASCADE, tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE, PRIMARY KEY(question_id,tag_id));' +
-      'CREATE TABLE mistake_causes (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, description TEXT, created_at TEXT NOT NULL);' +
-      'CREATE TABLE question_mistake_causes (question_id TEXT NOT NULL REFERENCES questions(id) ON DELETE CASCADE, mistake_cause_id TEXT NOT NULL REFERENCES mistake_causes(id) ON DELETE CASCADE, confidence REAL NOT NULL DEFAULT 1.0, PRIMARY KEY(question_id,mistake_cause_id));' +
-      'CREATE TABLE review_states (question_id TEXT PRIMARY KEY REFERENCES questions(id) ON DELETE CASCADE, reps INTEGER NOT NULL DEFAULT 0, ease REAL NOT NULL DEFAULT 2.5, interval_days INTEGER NOT NULL DEFAULT 0, due_at TEXT NOT NULL, last_reviewed_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);' +
-      'CREATE TABLE review_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, question_id TEXT NOT NULL REFERENCES questions(id) ON DELETE CASCADE, grade TEXT NOT NULL CHECK (grade IN ('again','hard','good','easy')), quality INTEGER NOT NULL, previous_interval_days INTEGER NOT NULL, next_interval_days INTEGER NOT NULL, ease_before REAL NOT NULL, ease_after REAL NOT NULL, reviewed_at TEXT NOT NULL);' +
-      'CREATE INDEX idx_questions_updated ON questions(updated_at); CREATE INDEX idx_review_due ON review_states(due_at); ' +
-      'CREATE INDEX idx_qkp_kp ON question_knowledge_points(knowledge_point_id); CREATE INDEX idx_qtag_tag ON question_tags(tag_id); CREATE INDEX idx_qcause_cause ON question_mistake_causes(mistake_cause_id);' +
-      'CREATE VIRTUAL TABLE questions_fts USING fts5(question_id UNINDEXED,content,ocr_text,answer,knowledge_points,tags,mistake_cause,analysis);' +
-      'PRAGMA user_version = 2;'
-    )
+    this.db.exec(`
+      CREATE TABLE questions (
+        id TEXT PRIMARY KEY,
+        content TEXT NOT NULL,
+        answer TEXT NOT NULL DEFAULT '',
+        ocr_text TEXT,
+        source TEXT,
+        difficulty INTEGER NOT NULL DEFAULT 3 CHECK (difficulty BETWEEN 1 AND 5),
+        mistake_cause TEXT,
+        analysis TEXT,
+        followup_question TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE question_media (
+        id TEXT PRIMARY KEY,
+        question_id TEXT NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL CHECK (kind IN ('image','video','html','text')),
+        title TEXT,
+        source TEXT,
+        content TEXT,
+        mime_type TEXT,
+        poster TEXT,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE knowledge_points (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        description TEXT,
+        parent_id TEXT REFERENCES knowledge_points(id) ON DELETE SET NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE question_knowledge_points (
+        question_id TEXT NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
+        knowledge_point_id TEXT NOT NULL REFERENCES knowledge_points(id) ON DELETE CASCADE,
+        importance REAL NOT NULL DEFAULT 1.0,
+        PRIMARY KEY(question_id,knowledge_point_id)
+      );
+      CREATE TABLE tags (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE question_tags (
+        question_id TEXT NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
+        tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+        PRIMARY KEY(question_id,tag_id)
+      );
+      CREATE TABLE mistake_causes (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        description TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE question_mistake_causes (
+        question_id TEXT NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
+        mistake_cause_id TEXT NOT NULL REFERENCES mistake_causes(id) ON DELETE CASCADE,
+        confidence REAL NOT NULL DEFAULT 1.0,
+        PRIMARY KEY(question_id,mistake_cause_id)
+      );
+      CREATE TABLE review_states (
+        question_id TEXT PRIMARY KEY REFERENCES questions(id) ON DELETE CASCADE,
+        reps INTEGER NOT NULL DEFAULT 0,
+        ease REAL NOT NULL DEFAULT 2.5,
+        interval_days INTEGER NOT NULL DEFAULT 0,
+        due_at TEXT NOT NULL,
+        last_reviewed_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE review_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        question_id TEXT NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
+        grade TEXT NOT NULL CHECK (grade IN ('again','hard','good','easy')),
+        quality INTEGER NOT NULL,
+        previous_interval_days INTEGER NOT NULL,
+        next_interval_days INTEGER NOT NULL,
+        ease_before REAL NOT NULL,
+        ease_after REAL NOT NULL,
+        reviewed_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_questions_updated ON questions(updated_at);
+      CREATE INDEX idx_review_due ON review_states(due_at);
+      CREATE INDEX idx_qkp_kp ON question_knowledge_points(knowledge_point_id);
+      CREATE INDEX idx_qtag_tag ON question_tags(tag_id);
+      CREATE INDEX idx_qcause_cause ON question_mistake_causes(mistake_cause_id);
+      CREATE VIRTUAL TABLE questions_fts USING fts5(
+        question_id UNINDEXED,
+        content,
+        ocr_text,
+        answer,
+        knowledge_points,
+        tags,
+        mistake_cause,
+        analysis
+      );
+      PRAGMA user_version = 2;
+    `)
   }
 
   close(){this.db.close();void this.graphSync?.close?.()}
