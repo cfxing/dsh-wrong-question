@@ -24,14 +24,46 @@ function sameOrigin(req:IncomingMessage){const origin=req.headers.origin;if(!ori
 
 /** 解析题目图片的磁盘绝对路径。imagePath 可能为绝对路径、相对进程 CWD 或相对 DSH_HOME；逐个候选基目录探测。 */
 async function resolveImagePath(imagePath:string):Promise<string|null>{
+  return resolveMediaPath(imagePath)
+}
+
+async function resolveMediaPath(source:string):Promise<string|null>{
   const candidates:string[]=[]
-  if(isAbsolute(imagePath)){candidates.push(imagePath)}
+  if(isAbsolute(source)){candidates.push(source)}
   else{
     const home=process.env.DSH_HOME||join(homedir(),'.dsh')
-    candidates.push(join(home,'wrong-question',imagePath),join(home,imagePath),join(process.cwd(),imagePath),join(process.cwd(),'wrong-question',imagePath))
+    candidates.push(join(home,'wrong-question',source),join(home,source),join(process.cwd(),source),join(process.cwd(),'wrong-question',source))
   }
-  for(const c of candidates){try{if((await stat(c)).isFile())return c}catch{/* 继续探测下一个 */}}
+  for(const c of candidates){try{if((await stat(c)).isFile())return c}catch{/* continue */}}
   return null
+}
+
+function mediaMime(path:string,fallback?:string){
+  if(fallback)return fallback
+  const ext=path.toLowerCase().split('.').pop()??''
+  const map:Record<string,string>={jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png',gif:'image/gif',webp:'image/webp',svg:'image/svg+xml',mp4:'video/mp4',webm:'video/webm',ogg:'video/ogg',mov:'video/quicktime',m4v:'video/mp4',html:'text/html',htm:'text/html'}
+  return map[ext]
+}
+
+function streamMedia(res:ServerResponse,req:IncomingMessage,path:string,size:number,type:string){
+  const range=req.headers.range
+  if(!range){
+    res.writeHead(200,{'content-type':type,'content-length':String(size),'accept-ranges':'bytes','cache-control':'private, max-age=300'})
+    readFile(path).then(data=>res.end(data)).catch(()=>{if(!res.headersSent)res.writeHead(500);res.end()})
+    return
+  }
+  const m=/bytes=(\d*)-(\d*)/i.exec(range)
+  if(!m){res.writeHead(416,{'content-range':`bytes */${size}`}).end();return}
+  const start=m[1]?Number(m[1]):Math.max(0,size-Number(m[2]||0))
+  const end=m[2]?Math.min(size-1,Number(m[2])):size-1
+  if(!Number.isFinite(start)||!Number.isFinite(end)||start<0||start>end||start>=size){res.writeHead(416,{'content-range':`bytes */${size}`}).end();return}
+  res.writeHead(206,{'content-type':type,'content-length':String(end-start+1),'content-range':`bytes ${start}-${end}/${size}`,'accept-ranges':'bytes','cache-control':'private, max-age=300'})
+  import('node:fs').then(({createReadStream})=>createReadStream(path,{start,end}).pipe(res)).catch(()=>res.end())
+}
+
+function sendMedia(res:ServerResponse,req:IncomingMessage,data:Buffer,type:string,_allowRange:boolean){
+  res.writeHead(200,{'content-type':type,'content-length':String(data.length),'accept-ranges':'bytes','cache-control':'private, max-age=300'})
+  res.end(data)
 }
 
 export function registerWrongQuestionWeb(ctx:RuntimeContextLike,db:WrongQuestionDb,hybrid: { graph: KnowledgeGraph | null; embedder: Embedder } = { graph: null, embedder: undefined as unknown as Embedder }){
@@ -54,11 +86,34 @@ export function registerWrongQuestionWeb(ctx:RuntimeContextLike,db:WrongQuestion
         if(req.method==='POST'&&p==='/search'){const b=await body(req);return send(res,200,db.search(String(b.query??''),Math.min(50,Number(b.limit??20))))}
         if(req.method==='POST'&&p==='/hybrid'){const b=await body(req);return send(res,200,await hybridSearch(db,hybrid.graph,hybrid.embedder,String(b.query??''),{topK:Math.min(50,Number(b.limit??20))}))}
         if(req.method==='POST'&&p==='/similar'){const b=await body(req);return send(res,200,db.findSimilar(String(b.questionId??''),Math.min(50,Number(b.limit??10))))}
+        const media=p.match(/^\/questions\/([^/]+)\/media\/([^/]+)$/)
+        if(media&&req.method==='GET'){
+          const questionId=decodeURIComponent(media[1]),mediaId=decodeURIComponent(media[2])
+          const item=db.getMedia(questionId,mediaId)
+          if(!item)throw new Error('Media not found')
+          if(item.content){
+            const match=String(item.content).match(/^data:([^;]+);base64,(.*)$/is)
+            if(match){
+              const data=Buffer.from(match[2],'base64')
+              return sendMedia(res,req,data,match[1],false)
+            }
+          }
+          const source=String(item.source??'').trim()
+          if(!source)throw new Error('Media source not found')
+          if(/^https?:\/\//i.test(source))return res.writeHead(302,{location:source}).end()
+          const abs=await resolveMediaPath(source)
+          if(!abs)throw new Error('Media file not found')
+          const info=await stat(abs)
+          if(!info.isFile()||info.size>512_000_000)throw new Error('Media file is invalid or too large')
+          const type=mediaMime(abs,item.mime_type)
+          if(!type)throw new Error('Unsupported media type')
+          return streamMedia(res,req,abs,info.size,type)
+        }
         const m=p.match(/^\/questions\/([^/]+)$/)
         const image=p.match(/^\/questions\/([^/]+)\/image$/)
         if(image&&req.method==='GET'){
           const q=db.getQuestion(decodeURIComponent(image[1]));if(!q?.imagePath)throw new Error('Question image not found')
-          const abs=await resolveImagePath(q.imagePath);if(!abs)throw new Error('Question image file not found')
+          const abs=await resolveMediaPath(q.imagePath);if(!abs)throw new Error('Question image file not found')
           const info=await stat(abs);if(!info.isFile()||info.size>8_000_000)throw new Error('Question image is invalid or too large')
           const data=await readFile(abs);const type=imageMime(data);if(!type)throw new Error('Unsupported question image')
           res.writeHead(200,{'content-type':type,'content-length':String(data.length),'cache-control':'private, max-age=300'});res.end(data);return
