@@ -154,101 +154,33 @@ function QuestionEditor({question,close,saved}:{question:Question|null;close:()=
 function Field({label,value,set,rows=1}:{label:string;value:string;set:(v:string)=>void;rows?:number}){return <label>{label}{rows>1?<textarea rows={rows} value={value} onChange={e=>set(e.target.value)}/>:<input value={value} onChange={e=>set(e.target.value)}/>}</label>}
 
 function GraphView({g,onPick}:{g:any;onPick:(name:string)=>void}){
-  const [vp,setVp]=useState<{scale:number;tx:number;ty:number}>({scale:1,tx:0,ty:0})
-  const svgRef=React.useRef<SVGSVGElement>(null)
-  const dragRef=React.useRef<{x:number;y:number;on:boolean}>({x:0,y:0,on:false})
+  const [vp,setVp]=useState({scale:1,tx:0,ty:0}),[pos,setPos]=useState<Record<string,{x:number;y:number}>>({}),[hover,setHover]=useState<string|null>(null)
+  const svgRef=React.useRef<SVGSVGElement>(null),dragRef=React.useRef<GraphDrag>({type:'none'})
   if(!g)return null
-  const layout=layoutGraph(g)
-  const [pos,setPos]=useState<Record<string,{x:number;y:number}>>({})
-  const [hover,setHover]=useState<string|null>(null)
-  const nodeDragRef=React.useRef<string|null>(null)
-  const movedRef=React.useRef(false)
-  const pairs=[...g.edges].sort((a:any,b:any)=>b.weight-a.weight).slice(0,8)
-  const at=(n:any)=>pos[n.id]||{x:n.x,y:n.y}
-  const computeFit=()=>{
-    if(!layout.nodes.length)return {scale:1,tx:0,ty:0}
-    const margin=48,WB=720,HB=480
-    let minX=1e9,minY=1e9,maxX=-1e9,maxY=-1e9
-    for(const n of layout.nodes){const bottom=n.y+n.r+34;minX=Math.min(minX,n.x-n.r);maxX=Math.max(maxX,n.x+n.r);minY=Math.min(minY,n.y-n.r);maxY=Math.max(maxY,bottom)}
-    const bw=Math.max(1,maxX-minX),bh=Math.max(1,maxY-minY)
-    const scale=Math.min(4,Math.max(0.4,Math.min((WB-2*margin)/bw,(HB-2*margin)/bh)))
-    return {scale,tx:(WB-bw*scale)/2-minX*scale,ty:(HB-bh*scale)/2-minY*scale}
-  }
-  const fittedKey=JSON.stringify(g.nodes.map((n:any)=>n.id).sort())
-  const reset=()=>{setPos({});setVp(computeFit())}
-  React.useEffect(()=>{setPos({});setVp(computeFit())},[fittedKey])
-  const zoomAt=(px:number,py:number,factor:number)=>{
-    setVp(v=>{
-      const scale=Math.min(4,Math.max(0.4,v.scale*factor))
-      const k=scale/v.scale
-      return {scale,tx:px-(px-v.tx)*k,ty:py-(py-v.ty)*k}
-    })
-  }
-  const onWheel=(e:React.WheelEvent)=>{
-    if(!svgRef.current)return
-    const rect=svgRef.current.getBoundingClientRect()
-    zoomAt(e.clientX-rect.left,e.clientY-rect.top,e.deltaY<0?1.12:1/1.12)
-  }
-  const onDown=(e:React.PointerEvent)=>{
-    if(nodeDragRef.current)return
-    dragRef.current={x:e.clientX,y:e.clientY,on:true}
-    svgRef.current?.setPointerCapture(e.pointerId)
-  }
-  const onMove=(e:React.PointerEvent)=>{
-    const nd=nodeDragRef.current
-    if(nd){ // 拖动节点：换算到世界坐标并约束在画布内
-      const rect=svgRef.current?.getBoundingClientRect();if(!rect)return
-      movedRef.current=true
-      const node=layout.nodes.find((n:any)=>n.id===nd)
-      const radius=node?.r??24,labelRoom=radius+34
-      const wx=(e.clientX-rect.left-vp.tx)/vp.scale,wy=(e.clientY-rect.top-vp.ty)/vp.scale
-      const cx=Math.max(labelRoom,Math.min(720-labelRoom,wx)),cy=Math.max(labelRoom,Math.min(480-labelRoom,wy))
-      setPos(p=>({...p,[nd]:{x:cx,y:cy,clamped:true}}))
-      return
-    }
-    if(!dragRef.current.on)return
-    setVp(v=>({...v,tx:v.tx+e.clientX-dragRef.current.x,ty:v.ty+e.clientY-dragRef.current.y}))
-    dragRef.current={x:e.clientX,y:e.clientY,on:true}
-  }
-  const onUp=()=>{
-    const wasNode=!!nodeDragRef.current
-    dragRef.current.on=false
-    nodeDragRef.current=null
-    setHover(null)
-    if(!wasNode)movedRef.current=false // 平移重置; 节点拖拽保留给 onClick 判断
-  }
-  const nodeDown=(e:React.PointerEvent,n:any)=>{
-    e.stopPropagation();e.preventDefault()
-    movedRef.current=false
-    nodeDragRef.current=n.id;setPos(p=>({...p,[n.id]:{...at(n)}}))
-  }
-  const dim=(n:any,nab:Set<unknown>)=>!!hover&&hover!==n.id&&!nab.has(n.id)
-  return <div className="graph-page"><h2>知识图谱</h2><p>节点大小代表错题数量，连线粗细代表共同出现的频率。可拖拽节点、滚轮缩放，点击节点查看错题，悬停高亮关联。</p>
-    {layout.nodes.length?<div className="knowledge-map">
-      <div className="graph-stage">
-        <svg ref={svgRef} viewBox="0 0 720 480" role="img" aria-label="知识点关系图" onWheel={onWheel} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} style={{cursor:nodeDragRef.current?'move':dragRef.current.on?'grabbing':'grab'}}>
-          <g transform={`translate(${vp.tx} ${vp.ty}) scale(${vp.scale})`}>
-            <g className="graph-lines">{layout.edges.map((e:any)=>{
-              const s=at(e.source),t=at(e.target),on=!hover||hover===e.source.id||hover===e.target.id
-              return <g key={e.source.id+'-'+e.target.id} className={`graph-edge${on?'':' dim'}`}><line x1={s.x} y1={s.y} x2={t.x} y2={t.y} strokeWidth={Math.min(7,1+e.weight)} /><text x={(s.x+t.x)/2} y={(s.y+t.y)/2}>{e.weight}次</text></g>
-            })}</g>
-            <g>{layout.nodes.map((n:any)=>{
-              const p=at(n),nabors=new Set(layout.edges.filter((e:any)=>e.source.id===n.id||e.target.id===n.id).flatMap((e:any)=>[e.source.id,e.target.id]))
-              return <g className={`graph-vertex${hover===n.id?' on':''}${dim(n,nabors)?' dim':''}`} key={n.id} role="button" tabIndex={0} onPointerDown={e=>nodeDown(e,n)} onClick={ev=>{ev.stopPropagation();if(movedRef.current)movedRef.current=false;else onPick(n.id)}} onPointerEnter={()=>setHover(n.id)} onPointerLeave={()=>setHover(null)} onKeyDown={e=>{if(e.key==='Enter'||e.key===' ')onPick(n.id)}}><circle cx={p.x} cy={p.y} r={n.r} fill={n.color}/><text x={p.x} y={p.y+n.r+16} textAnchor="middle">{n.id} ({n.count})</text><title>{n.id}：{n.count} 道，掌握 {n.mastery}%，待复习 {n.due}</title></g>
-            })}</g>
-          </g>
-        </svg>
-        <div className="graph-controls">
-          <button onClick={(e)=>{const r=svgRef.current?.getBoundingClientRect();zoomAt((r?.width||720)/2,(r?.height||480)/2,1.2)}} aria-label="放大">＋</button>
-          <button onClick={(e)=>{const r=svgRef.current?.getBoundingClientRect();zoomAt((r?.width||720)/2,(r?.height||480)/2,1/1.2)}} aria-label="缩小">－</button>
-          <button onClick={reset} aria-label="重置">⟲</button>
-        </div>
-        <span className="graph-zoom">{Math.round(vp.scale*100)}%</span>
-      </div>
-      <aside><h3>关联最强的知识点对</h3>{pairs.map((e:any)=><button key={e.source+e.target} onClick={()=>onPick(e.source)}><span>{e.source}</span><i>×</i><span>{e.target}</span><b>{e.weight} 次</b></button>)}{!pairs.length&&<p>需要至少一道包含两个知识点的错题。</p>}</aside>
-    </div>:<div className="empty">添加知识点后会生成关系图。</div>}
-  </div>
+  const layout=useMemo(()=>layoutGraph(g),[g]),pairs=[...g.edges].sort((a:any,b:any)=>b.weight-a.weight).slice(0,8),at=(n:any)=>pos[n.id]||{x:n.x,y:n.y}
+  const fit=()=>fitGraph(layout.nodes),key=layout.nodes.map((n:any)=>n.id).join('|')
+  useEffect(()=>{setPos({});setVp(fit())},[key])
+  const toView=(x:number,y:number)=>{const r=svgRef.current?.getBoundingClientRect();return r?{x:(x-r.left)*VIEW_W/r.width,y:(y-r.top)*VIEW_H/r.height}:{x:0,y:0}}
+  const toWorld=(x:number,y:number)=>{const p=toView(x,y);return{x:(p.x-vp.tx)/vp.scale,y:(p.y-vp.ty)/vp.scale}}
+  const zoomAt=(x:number,y:number,f:number)=>{const p=toView(x,y);setVp(v=>{const scale=Math.min(MAX_SCALE,Math.max(MIN_SCALE,v.scale*f)),k=scale/v.scale;return{scale,tx:p.x-(p.x-v.tx)*k,ty:p.y-(p.y-v.ty)*k}})}
+  const down=(e:React.PointerEvent)=>{if(e.button!==0||dragRef.current.type!=='none')return;const p=toView(e.clientX,e.clientY);dragRef.current={type:'canvas',pointerId:e.pointerId,startX:p.x,startY:p.y,tx:vp.tx,ty:vp.ty,moved:false};e.currentTarget.setPointerCapture(e.pointerId)}
+  const move=(e:React.PointerEvent)=>{const d=dragRef.current;if(d.type==='node'){const p=toWorld(e.clientX,e.clientY),dx=p.x-d.x,dy=p.y-d.y;if(Math.hypot(dx,dy)>DRAG_THRESHOLD)d.moved=true;const n=layout.nodes.find((x:any)=>x.id===d.id);if(n){const r=n.r+20;setPos(o=>({...o,[d.id]:{x:clamp(d.nx+dx,r,VIEW_W-r),y:clamp(d.ny+dy,r,VIEW_H-r)}}))}return}if(d.type==='canvas'){const p=toView(e.clientX,e.clientY),dx=p.x-d.x,dy=p.y-d.y;if(Math.hypot(dx,dy)>DRAG_THRESHOLD)d.moved=true;setVp(v=>({...v,tx:d.tx+dx,ty:d.ty+dy}))}}
+  const up=(e:React.PointerEvent)=>{const d=dragRef.current;if(d.type!=='none'&&e.currentTarget.hasPointerCapture?.(d.pointerId))e.currentTarget.releasePointerCapture(d.pointerId);dragRef.current={type:'none'};setHover(null)}
+  const nodeDown=(e:React.PointerEvent,n:any)=>{e.stopPropagation();e.preventDefault();const p=toWorld(e.clientX,e.clientY),a=at(n);dragRef.current={type:'node',pointerId:e.pointerId,id:n.id,d:p.x,dy:p.y,nx:a.x,ny:a.y,moved:false};e.currentTarget.setPointerCapture(e.pointerId)}
+  const nodeClick=(e:React.MouseEvent,n:any)=>{e.stopPropagation();const d=dragRef.current;if(d.type==='node'&&d.id===n.id&&d.moved)return;onPick(n.id)}
+  const zoomButton=(f:number)=>{const r=svgRef.current?.getBoundingClientRect();if(r)zoomAt(r.left+r.width/2,r.top+r.height/2,f)}
+  return <div className="graph-page"><h2>知识图谱</h2><p>节点大小代表错题数量，连线粗细代表共同出现的频率。可拖拽节点、空白区域平移，滚轮缩放，点击节点查看错题，悬停高亮关联。</p>
+    {layout.nodes.length?<div className="knowledge-map"><div className="graph-stage"><svg ref={svgRef} viewBox={\`0 0 \${VIEW_W} \${VIEW_H}\`} role="img" aria-label="知识点关系图" onWheel={e=>{e.preventDefault();zoomAt(e.clientX,e.clientY,e.deltaY<0?1.12:1/1.12)}} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
+      <g transform={\`translate(\${vp.tx} \${vp.ty}) scale(\${vp.scale})\`}>
+        <g className="graph-lines">{layout.edges.map((e:any)=>{const s=at(e.source),t=at(e.target),on=!hover||hover===e.source.id||hover===e.target.id;return <g key={e.source.id+'-'+e.target.id} className={\`graph-edge\${on?'':' dim'}\`}><line x1={s.x} y1={s.y} x2={t.x} y2={t.y} strokeWidth={Math.min(7,1+e.weight)}/><text x={(s.x+t.x)/2} y={(s.y+t.y)/2}>{e.weight}次</text></g>})}</g>
+        <g>{layout.nodes.map((n:any)=>{const p=at(n),near=new Set(layout.edges.filter((e:any)=>e.source.id===n.id||e.target.id===n.id).flatMap((e:any)=>[e.source.id,e.target.id]));return <g className={\`graph-vertex\${hover===n.id?' on':''}\${hover&&hover!==n.id&&!near.has(n.id)?' dim':''}\`} key={n.id} role="button" tabIndex={0} onPointerDown={e=>nodeDown(e,n)} onClick={e=>nodeClick(e,n)} onPointerEnter={()=>setHover(n.id)} onPointerLeave={()=>setHover(null)} onKeyDown={e=>{if(e.key==='Enter'||e.key===' ')onPick(n.id)}}><circle cx={p.x} cy={p.y} r={n.r} fill={n.color}/><text x={p.x} y={p.y+n.r+16} textAnchor="middle">{n.id} ({n.count})</text><title>{n.id}：{n.count} 道，掌握 {n.mastery}%，待复习 {n.due}</title></g>})}</g>
+      </g></svg><div className="graph-controls"><button onClick={()=>zoomButton(1.2)}>＋</button><button onClick={()=>zoomButton(1/1.2)}>－</button><button onClick={()=>{setPos({});setVp(fit())}}>⟲</button></div><span className="graph-zoom">{Math.round(vp.scale*100)}%</span></div>
+      <aside><h3>关联最强的知识点对</h3>{pairs.map((e:any)=><button key={e.source+e.target} onClick={()=>onPick(e.source)}><span>{e.source}</span><i>×</i><span>{e.target}</span><b>{e.weight} 次</b></button>)}{!pairs.length&&<p>需要至少一道包含两个知识点的错题。</p>}</aside></div>:<div className="empty">添加知识点后会生成关系图。</div>}</div>
 }
+type GraphDrag={type:'none'}|{type:'canvas';pointerId:number;startX:number;startY:number;tx:number;ty:number;moved:boolean}|{type:'node';pointerId:number;id:string;d:number;dy:number;nx:number;ny:number;moved:boolean}
+const VIEW_W=720,VIEW_H=480,MIN_SCALE=.4,MAX_SCALE=4,DRAG_THRESHOLD=5
+function clamp(v:number,min:number,max:number){return Math.max(min,Math.min(max,v))}
+function fitGraph(nodes:any[]){if(!nodes.length)return{scale:1,tx:0,ty:0};const m=48;let a=Infinity,b=Infinity,c=-Infinity,d=-Infinity;for(const n of nodes){a=Math.min(a,n.x-n.r);c=Math.max(c,n.x+n.r);b=Math.min(b,n.y-n.r);d=Math.max(d,n.y+n.r+34)}const w=Math.max(1,c-a),h=Math.max(1,d-b),scale=Math.min(MAX_SCALE,Math.max(MIN_SCALE,Math.min((VIEW_W-2*m)/w,(VIEW_H-2*m)/h)));return{scale,tx:(VIEW_W-w*scale)/2-a*scale,ty:(VIEW_H-h*scale)/2-b*scale}}
 
 function layoutGraph(g:any){
   const source=[...g.nodes].sort((a:any,b:any)=>b.count-a.count).slice(0,50)
