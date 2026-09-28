@@ -35,7 +35,7 @@ Same-origin routes under `/wrong-question-control/v1`.
 
 No tutor agent is created here. Upload a question image in a Harness conversation and ask the Agent to analyze and save it. Harness Vision performs OCR/reasoning, then calls `add_question`. For an existing record it calls `analyze_question` with the record id and the structured result.
 
-The workspace also accepts a local image attachment so the original question stays with the record. Existing local `image_path` records are served through a validated image endpoint. Generated image/video URLs and inline interactive HTML cards can be stored in the `artifacts` field. HTML runs in a sandboxed iframe without same-origin access.
+The workspace also accepts a local image attachment so the original question stays with the record. Existing local `image_path` records are served through a validated image endpoint. Structured question analysis is stored in `question_analyses` rather than duplicated on the base `questions` row; generated variants live in `question_variants`. The base question no longer stores legacy free-form `analysis` or `followup_question` fields. Generated image/video URLs and inline interactive HTML cards can be stored in the `artifacts` field. HTML runs in a sandboxed iframe without same-origin access.
 
 ## Agent tools
 
