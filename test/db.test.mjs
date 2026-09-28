@@ -36,3 +36,58 @@ test('dashboard exposes trends and weekly summary',t=>{
   assert.equal(dashboard.weeklyReport.added,1)
   assert.equal(dashboard.mistakeCauses[0]?.name,'审题错误')
 })
+
+test('stores structured analysis and aggregates learning gaps',t=>{
+  const db=database(t)
+  const q=db.upsert({content:'求二次函数顶点',knowledgePoints:['二次函数']})
+  const analysis=db.saveQuestionAnalysis({
+    questionId:q.id,
+    solution:'先配方，再读取顶点坐标',
+    mistakeType:'concept_gap',
+    reasoningError:'没有把配方法与顶点公式联系起来',
+    knowledgeGaps:[
+      {name:'配方法理解',description:'不会通过配方法解释顶点公式',severity:.9,confidence:.95},
+      {name:'最值判断',severity:.7}
+    ],
+    reasoningGaps:['不会从变形结果反推图像性质'],
+    correctionStrategy:['复习完全平方公式','用配方法重新推导顶点'],
+    variantSuggestions:['改变参数后再求顶点','给定顶点反求参数'],
+    confidence:.92,
+    generatedBy:'harness-agent'
+  })
+  assert.equal(analysis.mistakeType,'concept_gap')
+  assert.deepEqual(analysis.knowledgeGaps,['配方法理解','最值判断'])
+  const gaps=db.getLearningGaps()
+  assert.equal(gaps.length,2)
+  assert.equal(gaps[0]?.name,'配方法理解')
+  assert.equal(gaps[0]?.questionCount,1)
+  assert.equal(db.getQuestionAnalysis(q.id)?.reasoningGaps[0],'不会从变形结果反推图像性质')
+})
+
+test('stores generated variants and real attempts independently from review logs',t=>{
+  const db=database(t)
+  const q=db.upsert({content:'一元二次方程求根'})
+  const variant=db.addQuestionVariant({
+    questionId:q.id,
+    variantType:'number_change',
+    content:'改变系数后重新求根',
+    answer:'x=2,-3',
+    analysis:'检查求根公式代入',
+    difficulty:3,
+    generatedBy:'harness-agent'
+  })
+  assert.equal(db.listQuestionVariants(q.id)[0]?.id,variant.id)
+  const attempt=db.recordQuestionAttempt({
+    questionId:q.id,
+    userAnswer:'x=2',
+    isCorrect:false,
+    score:.5,
+    timeSpentMs:12000,
+    mistakeCause:'计算错误',
+    analysis:'判别式计算出错'
+  })
+  assert.equal(db.listQuestionAttempts(q.id)[0]?.isCorrect,false)
+  assert.equal(db.listQuestionAttempts(q.id)[0]?.timeSpentMs,12000)
+  assert.equal(db.listQuestionAttempts(q.id)[0]?.mistakeCause,'计算错误')
+  assert.equal(db.logs().length,0)
+})
