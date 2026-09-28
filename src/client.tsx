@@ -76,12 +76,12 @@ function WrongQuestionWorkspace({close}:{close:()=>void}){
 function DashboardView({d,openTab}:{d:any;openTab:(tab:Tab)=>void}){
   if(!d)return null
   return <div className="dsh-wq-dashboard">
-    <div className="dsh-wq-metrics">{[['错题',d.totalQuestions],['待复习',d.due],['已复习',d.reviewed],['已掌握',d.mastered],['连续学习',d.streak+' 天']].map(([a,b])=><div className="metric" key={String(a)}><small>{a}</small><strong>{b}</strong></div>)}</div>
+    <div className="dsh-wq-metrics">{[['错题',d.totalQuestions],['待复习',d.due],['已复习',d.reviewed],['已掌握',d.mastered],['连续学习',d.streak+' 天'],['作答',d.attemptCount]].map(([a,b])=><div className="metric" key={String(a)}><small>{a}</small><strong>{b}</strong></div>)}</div>
     <div className="dashboard-grid">
       <section><div className="section-title"><h2>30 天复习趋势</h2><span>正确率 {Math.round(d.successRate*100)}%</span></div><MiniBars data={d.reviewTrend} value="reviews" title={(x:any)=>`${x.date}：${x.reviews} 次，正确率 ${Math.round(x.successRate*100)}%`}/></section>
       <section><div className="section-title"><h2>本周报告</h2><span>活跃 {d.weeklyReport.activeDays} 天</span></div><div className="weekly"><b>新增 {d.weeklyReport.added} 道</b><b>复习 {d.weeklyReport.reviews} 次</b><b>成功 {d.weeklyReport.successfulReviews} 次</b><p>薄弱知识点：{d.weeklyReport.weakestKnowledgePoint||'暂无'}</p></div></section>
       <section><h2>薄弱知识点</h2>{d.weakPoints.length?<div className="weak-list">{d.weakPoints.slice(0,7).map((x:any)=><div className="weak" key={x.name}><span>{x.name}</span><b>{x.mastery}%</b><i><em style={{width:`${x.mastery}%`}}/></i></div>)}</div>:<p className="empty compact">还没有知识点数据。</p>}</section>
-      <section><h2>难度分布</h2><MiniBars data={d.difficulty} value="count" labels title={(x:any)=>`难度 ${x.level}：${x.count} 道`}/></section>
+      <section><div className="section-title"><h2>学习漏洞</h2><span>整体作答正确率 {Math.round(d.attemptAccuracy*100)}%</span></div>{d.learningGaps?.length?<div className="cause-list">{d.learningGaps.slice(0,8).map((x:any)=><span key={x.name}>{x.name}<b>{x.questionCount}</b></span>)}</div>:<p className="empty compact">分析错题后会在这里形成学习漏洞。</p>}</section><section><h2>难度分布</h2><MiniBars data={d.difficulty} value="count" labels title={(x:any)=>`难度 ${x.level}：${x.count} 道`}/></section>
       <section className="wide"><div className="section-title"><h2>错误类型</h2><button onClick={()=>openTab('questions')}>查看错题</button></div><div className="cause-list">{d.mistakeCauses.map((x:any)=><span key={x.name}>{x.name}<b>{x.count}</b></span>)}</div></section>
     </div>
   </div>
