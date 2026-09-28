@@ -22,8 +22,6 @@ export interface Question {
   tags: string[]
   difficulty: number
   mistakeCause?: string
-  analysis?: string
-  followupQuestion?: string
   createdAt: string
   updatedAt: string
   review: ReviewState
