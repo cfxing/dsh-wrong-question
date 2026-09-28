@@ -79,6 +79,7 @@ test('stores generated variants and real attempts independently from review logs
   assert.equal(db.listQuestionVariants(q.id)[0]?.id,variant.id)
   const attempt=db.recordQuestionAttempt({
     questionId:q.id,
+    variantId:variant.id,
     userAnswer:'x=2',
     isCorrect:false,
     score:.5,
@@ -87,6 +88,7 @@ test('stores generated variants and real attempts independently from review logs
     analysis:'判别式计算出错'
   })
   assert.equal(db.listQuestionAttempts(q.id)[0]?.isCorrect,false)
+  assert.equal(db.listQuestionAttempts(q.id)[0]?.variantId,variant.id)
   assert.equal(db.listQuestionAttempts(q.id)[0]?.timeSpentMs,12000)
   assert.equal(db.listQuestionAttempts(q.id)[0]?.mistakeCause,'计算错误')
   assert.equal(db.logs().length,0)
