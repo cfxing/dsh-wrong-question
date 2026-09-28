@@ -165,6 +165,7 @@ export class WrongQuestionDb {
       CREATE TABLE IF NOT EXISTS question_attempts (
         id TEXT PRIMARY KEY,
         question_id TEXT NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
+        variant_id TEXT REFERENCES question_variants(id) ON DELETE CASCADE,
         user_answer TEXT,
         is_correct INTEGER CHECK (is_correct IN (0,1)),
         score REAL,
@@ -401,6 +402,7 @@ export class WrongQuestionDb {
 
   recordQuestionAttempt(input:{
     questionId:string
+    variantId?:string
     userAnswer?:string
     isCorrect?:boolean
     score?:number
@@ -409,20 +411,25 @@ export class WrongQuestionDb {
     analysis?:string
   }):QuestionAttempt{
     if(!this.getQuestion(input.questionId))throw new Error('Question not found')
+    if(input.variantId){
+      const variant=this.db.prepare('SELECT id,question_id FROM question_variants WHERE id=?').get(input.variantId) as any
+      if(!variant)throw new Error('Variant not found')
+      if(String(variant.question_id)!==input.questionId)throw new Error('Variant does not belong to question')
+    }
     const id=crypto.randomUUID(),now=new Date().toISOString()
     this.db.prepare(`
       INSERT INTO question_attempts(
-        id,question_id,user_answer,is_correct,score,time_spent_ms,mistake_cause,analysis,attempted_at
-      ) VALUES(?,?,?,?,?,?,?,?,?)
+        id,question_id,variant_id,user_answer,is_correct,score,time_spent_ms,mistake_cause,analysis,attempted_at
+      ) VALUES(?,?,?,?,?,?,?,?,?,?)
     `).run(
-      id,input.questionId,input.userAnswer??null,
+      id,input.questionId,input.variantId??null,input.userAnswer??null,
       input.isCorrect==null?null:(input.isCorrect?1:0),
       input.score==null?null:Number(input.score),
       input.timeSpentMs==null?null:Math.max(0,Math.round(Number(input.timeSpentMs))),
       input.mistakeCause??null,input.analysis??null,now
     )
     return {
-      id,questionId:input.questionId,userAnswer:input.userAnswer??undefined,
+      id,questionId:input.questionId,variantId:input.variantId??undefined,userAnswer:input.userAnswer??undefined,
       isCorrect:input.isCorrect,score:input.score==null?undefined:Number(input.score),
       timeSpentMs:input.timeSpentMs==null?undefined:Math.max(0,Math.round(Number(input.timeSpentMs))),
       mistakeCause:input.mistakeCause??undefined,analysis:input.analysis??undefined,attemptedAt:now
@@ -433,7 +440,7 @@ export class WrongQuestionDb {
     const rows=this.db.prepare('SELECT * FROM question_attempts WHERE question_id=? ORDER BY attempted_at DESC LIMIT ?')
       .all(questionId,Math.min(100,Math.max(1,limit))) as any[]
     return rows.map(r=>({
-      id:String(r.id),questionId:String(r.question_id),userAnswer:r.user_answer??undefined,
+      id:String(r.id),questionId:String(r.question_id),variantId:r.variant_id??undefined,userAnswer:r.user_answer??undefined,
       isCorrect:r.is_correct==null?undefined:Boolean(r.is_correct),score:r.score==null?undefined:Number(r.score),
       timeSpentMs:r.time_spent_ms==null?undefined:Number(r.time_spent_ms),
       mistakeCause:r.mistake_cause??undefined,analysis:r.analysis??undefined,attemptedAt:String(r.attempted_at)
