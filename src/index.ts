@@ -47,9 +47,9 @@ export function apply(ctx:Context){
   register('add_question','Create a wrong-question record.',
     {content:{type:'string'},answer:{type:'string'},knowledge_points:{type:'array',items:{type:'string'}},tags:{type:'array',items:{type:'string'}},difficulty:{type:'number'},mistake_cause:{type:'string'},analysis:{type:'string'},followup_question:{type:'string'},source:{type:'string'},image_path:{type:'string'},image_data:{type:'string',description:'Optional data:image/... base64 URL from the workspace.'},artifacts,ocr_text:{type:'string'}},
     ['content'],async(a:any)=>db.upsert({content:a.content,answer:a.answer,knowledgePoints:a.knowledge_points,tags:a.tags,difficulty:a.difficulty,mistakeCause:a.mistake_cause,analysis:a.analysis,followupQuestion:a.followup_question,source:a.source,imagePath:a.image_path,imageData:a.image_data,artifacts:a.artifacts,ocrText:a.ocr_text}))
-  register('get_question','Get one wrong question.',
+  register('get_question','Get one wrong question together with structured analysis, learning gaps, generated variants, and recent attempts.',
     {question_id:{type:'string'}},['question_id'],
-    async(a:any)=>{const q=db.getQuestion(a.question_id);if(!q)throw new Error('Question not found');return q})
+    async(a:any)=>{const detail=db.getQuestionDetail(a.question_id);if(!detail)throw new Error('Question not found');return detail})
   register('update_question','Update a wrong question.',
     {question_id:{type:'string'},content:{type:'string'},answer:{type:'string'},knowledge_points:{type:'array',items:{type:'string'}},tags:{type:'array',items:{type:'string'}},difficulty:{type:'number'},mistake_cause:{type:'string'},analysis:{type:'string'},followup_question:{type:'string'},artifacts},
     ['question_id'],async(a:any)=>{const q=db.getQuestion(a.question_id);if(!q)throw new Error('Question not found');return db.upsert({id:q.id,content:a.content??q.content,answer:a.answer??q.answer,knowledgePoints:a.knowledge_points??q.knowledgePoints,tags:a.tags??q.tags,difficulty:a.difficulty??q.difficulty,mistakeCause:a.mistake_cause??q.mistakeCause,analysis:a.analysis??q.analysis,followupQuestion:a.followup_question??q.followupQuestion,artifacts:a.artifacts??q.artifacts})})
