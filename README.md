@@ -46,3 +46,5 @@ The workspace also accepts a local image attachment so the original question sta
 Tool results are serialized to JSON text at the registration boundary. This matches the declared string output schema while preserving structured records for the Agent and avoids Harness lossless-JSON validation errors.
 
 All records, attached images, analysis, review state, and review logs stay in the plugin's own SQLite database. Semantic embeddings remain an optional future retrieval backend; the current release uses SQLite FTS plus knowledge point, tag, and lexical similarity.
+
+When a wrong question is saved from an image sent in the current Harness turn, the plugin copies the durable DSH image attachment into `~/.dsh/wrong-question/media/<question-id>/` and links it from `question_media`. Injected or generated images from other message sources are not auto-attached.
