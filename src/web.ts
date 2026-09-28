@@ -118,7 +118,7 @@ export function registerWrongQuestionWeb(ctx:RuntimeContextLike,db:WrongQuestion
           const data=await readFile(abs);const type=imageMime(data);if(!type)throw new Error('Unsupported question image')
           res.writeHead(200,{'content-type':type,'content-length':String(data.length),'cache-control':'private, max-age=300'});res.end(data);return
         }
-        if(m&&req.method==='GET'){const q=db.getQuestion(decodeURIComponent(m[1]));if(!q)throw new Error('Question not found');return send(res,200,q)}
+        if(m&&req.method==='GET'){const detail=db.getQuestionDetail(decodeURIComponent(m[1]));if(!detail)throw new Error('Question not found');return send(res,200,detail)}
         if(m&&req.method==='DELETE'){return send(res,200,{deleted:db.delete(decodeURIComponent(m[1]))})}
         const review=p.match(/^\/questions\/([^/]+)\/review$/)
         if(review&&req.method==='POST'){
