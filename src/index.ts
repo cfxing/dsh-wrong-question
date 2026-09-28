@@ -168,6 +168,7 @@ export function apply(ctx:Context){
   register('record_question_attempt','Record the learner\'s actual attempt on a wrong question. Keep this separate from Again/Hard/Good/Easy review scheduling.',
     {
       question_id:{type:'string'},
+      variant_id:{type:'string'},
       user_answer:{type:'string'},
       is_correct:{type:'boolean'},
       score:{type:'number'},
@@ -178,6 +179,7 @@ export function apply(ctx:Context){
     ['question_id'],
     async(a:any)=>db.recordQuestionAttempt({
       questionId:a.question_id,
+      variantId:a.variant_id,
       userAnswer:a.user_answer,
       isCorrect:a.is_correct,
       score:a.score,
