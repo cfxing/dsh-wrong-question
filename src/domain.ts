@@ -38,6 +38,56 @@ export interface QuestionArtifact {
   poster?: string
 }
 
+export interface WrongQuestionAnalysis {
+  questionId: string
+  solution?: string
+  mistakeType?: string
+  reasoningError?: string
+  knowledgeGaps: string[]
+  reasoningGaps: string[]
+  correctionStrategy: string[]
+  variantSuggestions: string[]
+  confidence?: number
+  generatedBy?: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface LearningGap {
+  id: string
+  name: string
+  description?: string
+  severity: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface QuestionVariant {
+  id: string
+  questionId: string
+  variantType: string
+  content: string
+  answer: string
+  analysis?: string
+  difficulty: number
+  source?: string
+  generatedBy?: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface QuestionAttempt {
+  id: string
+  questionId: string
+  userAnswer?: string
+  isCorrect?: boolean
+  score?: number
+  timeSpentMs?: number
+  mistakeCause?: string
+  analysis?: string
+  attemptedAt: string
+}
+
 export interface ReviewLog {
   id: number
   questionId: string
