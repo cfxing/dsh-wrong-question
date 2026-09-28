@@ -97,7 +97,7 @@ export class OllamaEmbedder implements Embedder {
 
 /** 组合题目文本供 embedding。 */
 export function questionText(q: Question): string {
-  return [q.content, q.answer, q.analysis, q.mistakeCause, q.ocrText, ...q.tags, ...q.knowledgePoints]
+  return [q.content, q.answer, q.mistakeCause, q.ocrText, ...q.tags, ...q.knowledgePoints]
     .filter((x): x is string => typeof x === 'string' && x.length > 0)
     .join(' ')
 }
