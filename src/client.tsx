@@ -106,7 +106,7 @@ function ReviewView({qs,onReviewed}:{qs:Question[];onReviewed:()=>Promise<void>}
   if(!q)return <div className="review-empty"><span>✓</span><h2>今天的复习完成了</h2><p>新的到期错题会自动出现在这里。</p></div>
   const grade=async(g:string)=>{setBusy(true);try{await post(`/questions/${q.id}/review`,{grade:g});await onReviewed();setRevealed(false);setIndex(i=>Math.min(i,Math.max(0,qs.length-2)))}finally{setBusy(false)}}
   return <div className="review-card"><div className="review-progress">第 {index+1} / {qs.length} 题</div><MediaGallery q={q} compact/><h2>{q.content}</h2><div className="chips">{q.knowledgePoints.map(x=><span key={x}>{x}</span>)}</div>
-    {!revealed?<button className="reveal" onClick={()=>setRevealed(true)}>显示答案</button>:<div className="review-answer"><h3>正确答案</h3><pre>{q.answer||'尚未填写'}</pre>{q.analysis&&<><h3>解析</h3><p>{q.analysis}</p></>}<div className="review-buttons">{(['again','hard','good','easy'] as const).map(g=><button disabled={busy} key={g} onClick={()=>void grade(g)}><b>{labelGrade(g)}</b><small>{nextHint(q,g)}</small></button>)}</div></div>}
+    {!revealed?<button className="reveal" onClick={()=>setRevealed(true)}>显示答案</button>:<div className="review-answer"><h3>正确答案</h3><pre>{q.answer||'尚未填写'}</pre><div className="review-buttons">{(['again','hard','good','easy'] as const).map(g=><button disabled={busy} key={g} onClick={()=>void grade(g)}><b>{labelGrade(g)}</b><small>{nextHint(q,g)}</small></button>)}</div></div>}
   </div>
 }
 
