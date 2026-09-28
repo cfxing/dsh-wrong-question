@@ -8,10 +8,58 @@ export interface PersistedQuestionImage {
   attachmentId: string
 }
 
-type DurableImageRef = {
+export interface DurableImageRef {
   attachmentId: unknown
   mediaType: string
   name?: string
+}
+
+interface SessionImageState {
+  turn: number
+  refs: Map<string, DurableImageRef>
+}
+
+/**
+ * Track current-turn direct user image attachments from durable session events.
+ * This avoids deprecated synchronous Session history readers and only retains the
+ * small set of image references needed by a live tool call.
+ */
+export function createCurrentTurnImageTracker(ctx: any){
+  const states=new WeakMap<object,SessionImageState>()
+  const stateFor=(session:object,turn=0)=>{
+    let state=states.get(session)
+    if(!state||state.turn!==turn){
+      state={turn,refs:new Map()}
+      states.set(session,state)
+    }
+    return state
+  }
+  ctx.on('session/event',(session:any,event:any)=>{
+    if(!session||!event)return
+    if(event.type==='turn/start'){
+      states.set(session,{turn:Number(event.data?.turn??0),refs:new Map()})
+      return
+    }
+    if(event.type!=='user/message'||event.data?.source?.kind!=='user')return
+    const turnState=states.get(session)
+    if(!turnState)return
+    for(const block of event.data.content??[]){
+      if(block?.type!=='image'||!block.attachment?.attachmentId)continue
+      const ref=block.attachment as DurableImageRef
+      const key=String(ref.attachmentId)
+      if(!turnState.refs.has(key))turnState.refs.set(key,ref)
+    }
+  },{global:true})
+  return {
+    refsFor(session:any):DurableImageRef[]{
+      if(!session)return[]
+      const state=states.get(session)
+      return state?Array.from(state.refs.values()):[]
+    },
+    reset(session:any){
+      if(session)states.delete(session)
+    }
+  }
 }
 
 function extension(mediaType:string){
@@ -30,38 +78,6 @@ function safeId(value:unknown){
 }
 
 /**
- * Return image attachments belonging to direct user messages in the current turn.
- * Injected/generated images are intentionally ignored to avoid attaching unrelated media.
- */
-export function currentTurnImageRefs(exec:any):DurableImageRef[]{
-  const session=exec?.agent?.session
-  if(!session||typeof session.snapshotEvents!=='function')return[]
-  const events=Array.from(session.snapshotEvents()) as any[]
-  let start=0
-  for(let i=events.length-1;i>=0;i--){
-    if(events[i]?.type==='turn/start'){
-      start=i+1
-      break
-    }
-  }
-  const refs:DurableImageRef[]=[]
-  for(let i=start;i<events.length;i++){
-    const event=events[i]
-    if(event?.type!=='user/message'||event?.data?.source?.kind!=='user')continue
-    for(const block of event.data.content??[]){
-      if(block?.type==='image'&&block.attachment?.attachmentId)refs.push(block.attachment as DurableImageRef)
-    }
-  }
-  const seen=new Set<string>()
-  return refs.filter(ref=>{
-    const key=String(ref.attachmentId)
-    if(seen.has(key))return false
-    seen.add(key)
-    return true
-  })
-}
-
-/**
  * Copy current-turn durable normalized images into the wrong-question-owned media directory.
  * DSH's attachment store remains the source of truth for admitted user images; this creates
  * a plugin-owned copy so the wrong-question record remains self-contained.
@@ -71,8 +87,8 @@ export async function persistCurrentTurnImages(
   attachments:any,
   wrongQuestionDir:string,
   questionId:string,
+  refs:readonly DurableImageRef[]=[],
 ):Promise<PersistedQuestionImage[]>{
-  const refs=currentTurnImageRefs(exec)
   if(refs.length===0)return[]
   if(!attachments||typeof attachments.readImage!=='function'){
     throw new Error('Current turn contains an image attachment, but DSH attachments service is unavailable')
