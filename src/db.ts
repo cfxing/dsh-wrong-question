@@ -1,10 +1,10 @@
 import { DatabaseSync } from 'node:sqlite'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
-import type { Question, QuestionArtifact, ReviewGrade, ReviewLog, ReviewState, SearchHit, Dashboard, KnowledgeGraph } from './domain.js'
+import type { Question, QuestionArtifact, ReviewGrade, ReviewLog, ReviewState, SearchHit, Dashboard, KnowledgeGraph, WrongQuestionAnalysis, LearningGap, QuestionVariant, QuestionAttempt } from './domain.js'
 import { isDue } from './review.js'
 
-const SCHEMA_VERSION = 2
+const SCHEMA_VERSION = 3
 
 function parseArray(value: unknown): string[] {
   try { const v = JSON.parse(String(value ?? '[]')); return Array.isArray(v) ? v.map(String) : [] } catch { return [] }
@@ -39,108 +39,176 @@ export class WrongQuestionDb {
   }
 
   private ensureSchema() {
-    const version=Number((this.db.prepare('PRAGMA user_version').get() as any)?.user_version ?? 0)
-    if(version===SCHEMA_VERSION)return
-    this.db.exec('DROP TABLE IF EXISTS questions_fts; DROP TABLE IF EXISTS review_logs; DROP TABLE IF EXISTS review_states; DROP TABLE IF EXISTS question_media; DROP TABLE IF EXISTS question_mistake_causes; DROP TABLE IF EXISTS mistake_causes; DROP TABLE IF EXISTS question_tags; DROP TABLE IF EXISTS tags; DROP TABLE IF EXISTS question_knowledge_points; DROP TABLE IF EXISTS knowledge_points; DROP TABLE IF EXISTS questions;')
+    const version = Number((this.db.prepare('PRAGMA user_version').get() as any)?.user_version ?? 0)
+    const hasQuestions = Boolean(this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='questions'").get())
+    if (version > SCHEMA_VERSION) throw new Error(`Unsupported database schema version ${version}; expected <= ${SCHEMA_VERSION}`)
+
+    if (!hasQuestions) {
+      this.db.exec(`
+        CREATE TABLE questions (
+          id TEXT PRIMARY KEY,
+          content TEXT NOT NULL,
+          answer TEXT NOT NULL DEFAULT '',
+          ocr_text TEXT,
+          source TEXT,
+          difficulty INTEGER NOT NULL DEFAULT 3 CHECK (difficulty BETWEEN 1 AND 5),
+          mistake_cause TEXT,
+          analysis TEXT,
+          followup_question TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE question_media (
+          id TEXT PRIMARY KEY,
+          question_id TEXT NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
+          kind TEXT NOT NULL CHECK (kind IN ('image','video','html','text')),
+          title TEXT,
+          source TEXT,
+          content TEXT,
+          mime_type TEXT,
+          poster TEXT,
+          sort_order INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL
+        );
+        CREATE TABLE knowledge_points (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL UNIQUE,
+          description TEXT,
+          parent_id TEXT REFERENCES knowledge_points(id) ON DELETE SET NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE question_knowledge_points (
+          question_id TEXT NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
+          knowledge_point_id TEXT NOT NULL REFERENCES knowledge_points(id) ON DELETE CASCADE,
+          importance REAL NOT NULL DEFAULT 1.0,
+          PRIMARY KEY(question_id,knowledge_point_id)
+        );
+        CREATE TABLE tags (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL UNIQUE,
+          created_at TEXT NOT NULL
+        );
+        CREATE TABLE question_tags (
+          question_id TEXT NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
+          tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+          PRIMARY KEY(question_id,tag_id)
+        );
+        CREATE TABLE mistake_causes (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL UNIQUE,
+          description TEXT,
+          created_at TEXT NOT NULL
+        );
+        CREATE TABLE question_mistake_causes (
+          question_id TEXT NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
+          mistake_cause_id TEXT NOT NULL REFERENCES mistake_causes(id) ON DELETE CASCADE,
+          confidence REAL NOT NULL DEFAULT 1.0,
+          PRIMARY KEY(question_id,mistake_cause_id)
+        );
+        CREATE TABLE review_states (
+          question_id TEXT PRIMARY KEY REFERENCES questions(id) ON DELETE CASCADE,
+          reps INTEGER NOT NULL DEFAULT 0,
+          ease REAL NOT NULL DEFAULT 2.5,
+          interval_days INTEGER NOT NULL DEFAULT 0,
+          due_at TEXT NOT NULL,
+          last_reviewed_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE review_logs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          question_id TEXT NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
+          grade TEXT NOT NULL CHECK (grade IN ('again','hard','good','easy')),
+          quality INTEGER NOT NULL,
+          previous_interval_days INTEGER NOT NULL,
+          next_interval_days INTEGER NOT NULL,
+          ease_before REAL NOT NULL,
+          ease_after REAL NOT NULL,
+          reviewed_at TEXT NOT NULL
+        );
+        CREATE INDEX idx_questions_updated ON questions(updated_at);
+        CREATE INDEX idx_review_due ON review_states(due_at);
+        CREATE INDEX idx_qkp_kp ON question_knowledge_points(knowledge_point_id);
+        CREATE INDEX idx_qtag_tag ON question_tags(tag_id);
+        CREATE INDEX idx_qcause_cause ON question_mistake_causes(mistake_cause_id);
+        CREATE VIRTUAL TABLE questions_fts USING fts5(
+          question_id UNINDEXED,
+          content,
+          ocr_text,
+          answer,
+          knowledge_points,
+          tags,
+          mistake_cause,
+          analysis
+        );
+      `)
+      this.db.exec('PRAGMA user_version = 2')
+    }
+
+    this.migrateV3()
+    this.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
+  }
+
+  private migrateV3() {
     this.db.exec(`
-      CREATE TABLE questions (
+      CREATE TABLE IF NOT EXISTS question_analyses (
+        question_id TEXT PRIMARY KEY REFERENCES questions(id) ON DELETE CASCADE,
+        solution TEXT,
+        mistake_type TEXT,
+        reasoning_error TEXT,
+        knowledge_gaps TEXT NOT NULL DEFAULT '[]',
+        reasoning_gaps TEXT NOT NULL DEFAULT '[]',
+        correction_strategy TEXT NOT NULL DEFAULT '[]',
+        variant_suggestions TEXT NOT NULL DEFAULT '[]',
+        confidence REAL,
+        generated_by TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS learning_gaps (
         id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        description TEXT,
+        severity REAL NOT NULL DEFAULT 0.5 CHECK (severity BETWEEN 0 AND 1),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS question_learning_gaps (
+        question_id TEXT NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
+        gap_id TEXT NOT NULL REFERENCES learning_gaps(id) ON DELETE CASCADE,
+        confidence REAL NOT NULL DEFAULT 1 CHECK (confidence BETWEEN 0 AND 1),
+        severity REAL NOT NULL DEFAULT 0.5 CHECK (severity BETWEEN 0 AND 1),
+        PRIMARY KEY(question_id,gap_id)
+      );
+      CREATE TABLE IF NOT EXISTS question_variants (
+        id TEXT PRIMARY KEY,
+        question_id TEXT NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
+        variant_type TEXT NOT NULL,
         content TEXT NOT NULL,
         answer TEXT NOT NULL DEFAULT '',
-        ocr_text TEXT,
-        source TEXT,
+        analysis TEXT,
         difficulty INTEGER NOT NULL DEFAULT 3 CHECK (difficulty BETWEEN 1 AND 5),
+        source TEXT,
+        generated_by TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS question_attempts (
+        id TEXT PRIMARY KEY,
+        question_id TEXT NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
+        user_answer TEXT,
+        is_correct INTEGER CHECK (is_correct IN (0,1)),
+        score REAL,
+        time_spent_ms INTEGER CHECK (time_spent_ms IS NULL OR time_spent_ms >= 0),
         mistake_cause TEXT,
         analysis TEXT,
-        followup_question TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
+        attempted_at TEXT NOT NULL
       );
-      CREATE TABLE question_media (
-        id TEXT PRIMARY KEY,
-        question_id TEXT NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
-        kind TEXT NOT NULL CHECK (kind IN ('image','video','html','text')),
-        title TEXT,
-        source TEXT,
-        content TEXT,
-        mime_type TEXT,
-        poster TEXT,
-        sort_order INTEGER NOT NULL DEFAULT 0,
-        created_at TEXT NOT NULL
-      );
-      CREATE TABLE knowledge_points (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL UNIQUE,
-        description TEXT,
-        parent_id TEXT REFERENCES knowledge_points(id) ON DELETE SET NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-      CREATE TABLE question_knowledge_points (
-        question_id TEXT NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
-        knowledge_point_id TEXT NOT NULL REFERENCES knowledge_points(id) ON DELETE CASCADE,
-        importance REAL NOT NULL DEFAULT 1.0,
-        PRIMARY KEY(question_id,knowledge_point_id)
-      );
-      CREATE TABLE tags (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL UNIQUE,
-        created_at TEXT NOT NULL
-      );
-      CREATE TABLE question_tags (
-        question_id TEXT NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
-        tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
-        PRIMARY KEY(question_id,tag_id)
-      );
-      CREATE TABLE mistake_causes (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL UNIQUE,
-        description TEXT,
-        created_at TEXT NOT NULL
-      );
-      CREATE TABLE question_mistake_causes (
-        question_id TEXT NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
-        mistake_cause_id TEXT NOT NULL REFERENCES mistake_causes(id) ON DELETE CASCADE,
-        confidence REAL NOT NULL DEFAULT 1.0,
-        PRIMARY KEY(question_id,mistake_cause_id)
-      );
-      CREATE TABLE review_states (
-        question_id TEXT PRIMARY KEY REFERENCES questions(id) ON DELETE CASCADE,
-        reps INTEGER NOT NULL DEFAULT 0,
-        ease REAL NOT NULL DEFAULT 2.5,
-        interval_days INTEGER NOT NULL DEFAULT 0,
-        due_at TEXT NOT NULL,
-        last_reviewed_at TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-      CREATE TABLE review_logs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        question_id TEXT NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
-        grade TEXT NOT NULL CHECK (grade IN ('again','hard','good','easy')),
-        quality INTEGER NOT NULL,
-        previous_interval_days INTEGER NOT NULL,
-        next_interval_days INTEGER NOT NULL,
-        ease_before REAL NOT NULL,
-        ease_after REAL NOT NULL,
-        reviewed_at TEXT NOT NULL
-      );
-      CREATE INDEX idx_questions_updated ON questions(updated_at);
-      CREATE INDEX idx_review_due ON review_states(due_at);
-      CREATE INDEX idx_qkp_kp ON question_knowledge_points(knowledge_point_id);
-      CREATE INDEX idx_qtag_tag ON question_tags(tag_id);
-      CREATE INDEX idx_qcause_cause ON question_mistake_causes(mistake_cause_id);
-      CREATE VIRTUAL TABLE questions_fts USING fts5(
-        question_id UNINDEXED,
-        content,
-        ocr_text,
-        answer,
-        knowledge_points,
-        tags,
-        mistake_cause,
-        analysis
-      );
-      PRAGMA user_version = 2;
+      CREATE INDEX IF NOT EXISTS idx_qanalysis_updated ON question_analyses(updated_at);
+      CREATE INDEX IF NOT EXISTS idx_qlg_gap ON question_learning_gaps(gap_id);
+      CREATE INDEX IF NOT EXISTS idx_variant_question ON question_variants(question_id,created_at);
+      CREATE INDEX IF NOT EXISTS idx_attempt_question ON question_attempts(question_id,attempted_at);
     `)
   }
 
@@ -164,6 +232,207 @@ export class WrongQuestionDb {
   getQuestion(id:string){const rows=this.db.prepare('SELECT * FROM questions WHERE id=?').all(id) as any[];return this.hydrate(rows)[0]??null}
 
   getMedia(questionId:string,mediaId:string){return this.db.prepare('SELECT * FROM question_media WHERE id=? AND question_id=?').get(mediaId,questionId) as any ?? null}
+
+  getQuestionAnalysis(questionId:string):WrongQuestionAnalysis|null{
+    const row=this.db.prepare('SELECT * FROM question_analyses WHERE question_id=?').get(questionId) as any
+    if(!row)return null
+    return {
+      questionId:String(row.question_id),
+      solution:row.solution??undefined,
+      mistakeType:row.mistake_type??undefined,
+      reasoningError:row.reasoning_error??undefined,
+      knowledgeGaps:parseArray(row.knowledge_gaps),
+      reasoningGaps:parseArray(row.reasoning_gaps),
+      correctionStrategy:parseArray(row.correction_strategy),
+      variantSuggestions:parseArray(row.variant_suggestions),
+      confidence:row.confidence==null?undefined:Number(row.confidence),
+      generatedBy:row.generated_by??undefined,
+      createdAt:String(row.created_at),
+      updatedAt:String(row.updated_at)
+    }
+  }
+
+  private ensureLearningGap(name:string,description:string|undefined,severity:number,now:string):string{
+    const normalized=name.trim()
+    const existing=this.db.prepare('SELECT id FROM learning_gaps WHERE name=?').get(normalized) as any
+    if(existing){
+      this.db.prepare('UPDATE learning_gaps SET description=COALESCE(?,description),severity=MAX(severity,?),updated_at=? WHERE id=?')
+        .run(description??null,Math.min(1,Math.max(0,severity)),now,existing.id)
+      return String(existing.id)
+    }
+    const id=crypto.randomUUID()
+    this.db.prepare('INSERT INTO learning_gaps(id,name,description,severity,created_at,updated_at) VALUES(?,?,?,?,?,?)')
+      .run(id,normalized,description??null,Math.min(1,Math.max(0,severity)),now,now)
+    return id
+  }
+
+  saveQuestionAnalysis(input:{
+    questionId:string
+    solution?:string
+    mistakeType?:string
+    reasoningError?:string
+    knowledgeGaps?:Array<string|{name:string;description?:string;severity?:number;confidence?:number}>
+    reasoningGaps?:string[]
+    correctionStrategy?:string[]
+    variantSuggestions?:string[]
+    confidence?:number
+    generatedBy?:string
+  }):WrongQuestionAnalysis{
+    if(!this.getQuestion(input.questionId))throw new Error('Question not found')
+    const now=new Date().toISOString()
+    const old=this.getQuestionAnalysis(input.questionId)
+    const knowledgeGaps=(input.knowledgeGaps??[]).map(x=>typeof x==='string'?{name:x}:x).filter(x=>x.name?.trim())
+    this.db.exec('BEGIN')
+    try{
+      this.db.prepare(`
+        INSERT INTO question_analyses(
+          question_id,solution,mistake_type,reasoning_error,knowledge_gaps,
+          reasoning_gaps,correction_strategy,variant_suggestions,confidence,generated_by,created_at,updated_at
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(question_id) DO UPDATE SET
+          solution=excluded.solution,
+          mistake_type=excluded.mistake_type,
+          reasoning_error=excluded.reasoning_error,
+          knowledge_gaps=excluded.knowledge_gaps,
+          reasoning_gaps=excluded.reasoning_gaps,
+          correction_strategy=excluded.correction_strategy,
+          variant_suggestions=excluded.variant_suggestions,
+          confidence=excluded.confidence,
+          generated_by=excluded.generated_by,
+          updated_at=excluded.updated_at
+      `).run(
+        input.questionId,input.solution??null,input.mistakeType??null,input.reasoningError??null,
+        JSON.stringify(knowledgeGaps.map(x=>x.name.trim())),
+        JSON.stringify((input.reasoningGaps??[]).map(String).filter(Boolean)),
+        JSON.stringify((input.correctionStrategy??[]).map(String).filter(Boolean)),
+        JSON.stringify((input.variantSuggestions??[]).map(String).filter(Boolean)),
+        input.confidence==null?null:Math.min(1,Math.max(0,Number(input.confidence))),
+        input.generatedBy??null,
+        old?.createdAt??now,now
+      )
+      this.db.prepare('DELETE FROM question_learning_gaps WHERE question_id=?').run(input.questionId)
+      for(const gap of knowledgeGaps){
+        const severity=gap.severity==null?0.5:Math.min(1,Math.max(0,Number(gap.severity)))
+        const confidence=gap.confidence==null?1:Math.min(1,Math.max(0,Number(gap.confidence)))
+        const gapId=this.ensureLearningGap(gap.name,gap.description,severity,now)
+        this.db.prepare('INSERT INTO question_learning_gaps(question_id,gap_id,confidence,severity) VALUES(?,?,?,?)')
+          .run(input.questionId,gapId,confidence,severity)
+      }
+      this.db.exec('COMMIT')
+    }catch(e){try{this.db.exec('ROLLBACK')}catch{};throw e}
+    return this.getQuestionAnalysis(input.questionId)!
+  }
+
+  getLearningGaps(limit=20):Array<LearningGap & {questionCount:number;dueCount:number;confidence:number}>{
+    const rows=this.db.prepare(`
+      SELECT
+        g.*,
+        COUNT(DISTINCT qlg.question_id) AS question_count,
+        COUNT(DISTINCT CASE WHEN rs.due_at<=? THEN qlg.question_id END) AS due_count,
+        COALESCE(AVG(qlg.confidence),0) AS confidence
+      FROM learning_gaps g
+      JOIN question_learning_gaps qlg ON qlg.gap_id=g.id
+      JOIN questions q ON q.id=qlg.question_id
+      LEFT JOIN review_states rs ON rs.question_id=q.id
+      GROUP BY g.id
+      ORDER BY g.severity DESC, question_count DESC, g.updated_at DESC
+      LIMIT ?
+    `).all(new Date().toISOString(),Math.min(100,Math.max(1,limit))) as any[]
+    return rows.map(r=>({
+      id:String(r.id),
+      name:String(r.name),
+      description:r.description??undefined,
+      severity:Number(r.severity??0),
+      createdAt:String(r.created_at),
+      updatedAt:String(r.updated_at),
+      questionCount:Number(r.question_count??0),
+      dueCount:Number(r.due_count??0),
+      confidence:Number(r.confidence??0)
+    }))
+  }
+
+  addQuestionVariant(input:{
+    questionId:string
+    variantType:string
+    content:string
+    answer?:string
+    analysis?:string
+    difficulty?:number
+    source?:string
+    generatedBy?:string
+  }):QuestionVariant{
+    if(!this.getQuestion(input.questionId))throw new Error('Question not found')
+    const now=new Date().toISOString(),id=crypto.randomUUID()
+    this.db.prepare(`
+      INSERT INTO question_variants(
+        id,question_id,variant_type,content,answer,analysis,difficulty,source,generated_by,created_at,updated_at
+      ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+    `).run(
+      id,input.questionId,input.variantType.trim(),input.content,input.answer??'',
+      input.analysis??null,Math.min(5,Math.max(1,Number(input.difficulty??3))),
+      input.source??null,input.generatedBy??null,now,now
+    )
+    return {
+      id,questionId:input.questionId,variantType:input.variantType.trim(),content:input.content,
+      answer:input.answer??'',analysis:input.analysis??undefined,
+      difficulty:Math.min(5,Math.max(1,Number(input.difficulty??3))),
+      source:input.source??undefined,generatedBy:input.generatedBy??undefined,
+      createdAt:now,updatedAt:now
+    }
+  }
+
+  listQuestionVariants(questionId:string,limit=20):QuestionVariant[]{
+    const rows=this.db.prepare('SELECT * FROM question_variants WHERE question_id=? ORDER BY created_at DESC LIMIT ?')
+      .all(questionId,Math.min(100,Math.max(1,limit))) as any[]
+    return rows.map(r=>({
+      id:String(r.id),questionId:String(r.question_id),variantType:String(r.variant_type),
+      content:String(r.content),answer:r.answer??'',analysis:r.analysis??undefined,
+      difficulty:Number(r.difficulty??3),source:r.source??undefined,generatedBy:r.generated_by??undefined,
+      createdAt:String(r.created_at),updatedAt:String(r.updated_at)
+    }))
+  }
+
+  recordQuestionAttempt(input:{
+    questionId:string
+    userAnswer?:string
+    isCorrect?:boolean
+    score?:number
+    timeSpentMs?:number
+    mistakeCause?:string
+    analysis?:string
+  }):QuestionAttempt{
+    if(!this.getQuestion(input.questionId))throw new Error('Question not found')
+    const id=crypto.randomUUID(),now=new Date().toISOString()
+    this.db.prepare(`
+      INSERT INTO question_attempts(
+        id,question_id,user_answer,is_correct,score,time_spent_ms,mistake_cause,analysis,attempted_at
+      ) VALUES(?,?,?,?,?,?,?,?,?)
+    `).run(
+      id,input.questionId,input.userAnswer??null,
+      input.isCorrect==null?null:(input.isCorrect?1:0),
+      input.score==null?null:Number(input.score),
+      input.timeSpentMs==null?null:Math.max(0,Math.round(Number(input.timeSpentMs))),
+      input.mistakeCause??null,input.analysis??null,now
+    )
+    return {
+      id,questionId:input.questionId,userAnswer:input.userAnswer??undefined,
+      isCorrect:input.isCorrect,score:input.score==null?undefined:Number(input.score),
+      timeSpentMs:input.timeSpentMs==null?undefined:Math.max(0,Math.round(Number(input.timeSpentMs))),
+      mistakeCause:input.mistakeCause??undefined,analysis:input.analysis??undefined,attemptedAt:now
+    }
+  }
+
+  listQuestionAttempts(questionId:string,limit=20):QuestionAttempt[]{
+    const rows=this.db.prepare('SELECT * FROM question_attempts WHERE question_id=? ORDER BY attempted_at DESC LIMIT ?')
+      .all(questionId,Math.min(100,Math.max(1,limit))) as any[]
+    return rows.map(r=>({
+      id:String(r.id),questionId:String(r.question_id),userAnswer:r.user_answer??undefined,
+      isCorrect:r.is_correct==null?undefined:Boolean(r.is_correct),score:r.score==null?undefined:Number(r.score),
+      timeSpentMs:r.time_spent_ms==null?undefined:Number(r.time_spent_ms),
+      mistakeCause:r.mistake_cause??undefined,analysis:r.analysis??undefined,attemptedAt:String(r.attempted_at)
+    }))
+  }
+
 
   private ensure(table:'knowledge_points'|'tags'|'mistake_causes',name:string,now:string) {
     const id=crypto.randomUUID()
