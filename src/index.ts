@@ -25,12 +25,13 @@ export function apply(ctx:Context){
     close: () => { if (graph) return graph.close() },
   }
   const db=new WrongQuestionDb(dbPath(), graphSync)
-  void initGraph(db, embedder).then((g) => { graph = g })
+  const webRuntime={graph:null as KnowledgeGraph|null,embedder}
+  void initGraph(db, embedder).then((g) => { graph = g; webRuntime.graph = g })
   ctx.effect(()=>()=>db.close(),'dsh-wrong-question: sqlite')
   // Browser workspace and server API share the same SQLite connection.
   const runtime=ctx as any
-  if(runtime.inject)runtime.inject(['webServer'],(http:any)=>registerWrongQuestionWeb(http,db,{graph,embedder}))
-  else if(runtime.webServer)registerWrongQuestionWeb(runtime,db,{graph,embedder})
+  if(runtime.inject)runtime.inject(['webServer'],(http:any)=>registerWrongQuestionWeb(http,db,webRuntime))
+  else if(runtime.webServer)registerWrongQuestionWeb(runtime,db,webRuntime)
 
   // Tool registration is intentionally kept compact here; the Web workspace uses
   // the same domain service, so Agents and UI cannot diverge in persistence.
