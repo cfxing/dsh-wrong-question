@@ -2,7 +2,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { mkdirSync } from 'node:fs'
-import { persistCurrentTurnImages } from './image-import.js'
+import { createCurrentTurnImageTracker, persistCurrentTurnImages } from './image-import.js'
 import { WrongQuestionDb } from './db.js'
 import type { GraphSyncHook } from './db.js'
 import { scheduleReview } from './review.js'
@@ -27,6 +27,7 @@ export function apply(ctx:Context){
     close: () => { if (graph) return graph.close() },
   }
   const db=new WrongQuestionDb(dbPath(), graphSync)
+  const currentTurnImages=createCurrentTurnImageTracker(ctx)
   const webRuntime={graph:null as KnowledgeGraph|null,embedder}
   void initGraph(db, embedder).then((g) => { graph = g; webRuntime.graph = g })
   ctx.effect(()=>()=>db.close(),'dsh-wrong-question: sqlite')
@@ -52,7 +53,7 @@ export function apply(ctx:Context){
     ['content'],async(a:any,exec:any)=>{
       const id=crypto.randomUUID()
       const imported=!a.image_path&&!a.image_data
-        ? await persistCurrentTurnImages(exec,(ctx as any).attachments??(ctx as any).get?.('attachments'),wrongQuestionDir(),id)
+        ? await persistCurrentTurnImages(exec,(ctx as any).attachments??(ctx as any).get?.('attachments'),wrongQuestionDir(),id,currentTurnImages.refsFor(exec.agent?.session))
         : []
       const extraArtifacts=imported.slice(1).map(image=>({kind:'image' as const,title:image.name,source:image.path}))
       return db.upsert({
@@ -121,7 +122,7 @@ export function apply(ctx:Context){
         followupQuestion:a.followup_question??q.followupQuestion,
         artifacts:a.artifacts??q.artifacts
       })
-      const imported=await persistCurrentTurnImages(exec,(ctx as any).attachments??(ctx as any).get?.('attachments'),wrongQuestionDir(),updated.id)
+      const imported=await persistCurrentTurnImages(exec,(ctx as any).attachments??(ctx as any).get?.('attachments'),wrongQuestionDir(),updated.id,currentTurnImages.refsFor(exec.agent?.session))
       for(const image of imported)db.addQuestionImage({questionId:updated.id,source:image.path,mimeType:image.mimeType,title:image.name})
       const structured=db.saveQuestionAnalysis({
         questionId:updated.id,
