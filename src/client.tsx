@@ -7,7 +7,7 @@ const PLUGIN_ID='dsh-wrong-question'
 const API='/wrong-question-control/v1'
 type Tab='dashboard'|'questions'|'review'|'graph'
 type Artifact={id?:string;kind:'image'|'video'|'html';title?:string;source?:string;content?:string;poster?:string}
-type Question={id:string;content:string;answer:string;source?:string;imagePath?:string;imageData?:string;imageMediaId?:string;artifacts:Artifact[];ocrText?:string;knowledgePoints:string[];tags:string[];difficulty:number;mistakeCause?:string;analysis?:string;followupQuestion?:string;createdAt:string;updatedAt:string;review:{reps:number;ease:number;intervalDays:number;dueAt:string;lastReviewedAt?:string}}
+type Question={id:string;content:string;answer:string;source?:string;imagePath?:string;imageData?:string;imageMediaId?:string;artifacts:Artifact[];ocrText?:string;knowledgePoints:string[];tags:string[];difficulty:number;mistakeCause?:string;createdAt:string;updatedAt:string;review:{reps:number;ease:number;intervalDays:number;dueAt:string;lastReviewedAt?:string}}
 
 export const inject=['slots','layout']
 
@@ -162,11 +162,11 @@ function QuestionSheet({q,close,edit,refresh}:{q:Question;close:()=>void;edit:()
         </div>
 
         <Detail title="正确答案" value={full.answer}/>
-        <Detail title="解析" value={detail?.analysis?.solution||full.analysis}/>
+        <Detail title="解析" value={detail?.analysis?.solution}/>
         <Detail title="错误原因" value={full.mistakeCause}/>
         <Detail title="思维错误" value={detail?.analysis?.reasoningError}/>
         <Detail title="纠正策略" value={(detail?.analysis?.correctionStrategy??[]).join('\n')}/>
-        <Detail title="举一反三" value={full.followupQuestion}/>
+        <Detail title="变式建议" value={(detail?.analysis?.variantSuggestions??[]).join('\n')}/>
         <Detail title="OCR 文本" value={full.ocrText}/>
 
         {!!gaps.length&&<section>
@@ -224,7 +224,7 @@ function MediaGallery({q,compact}:{q:Question;compact?:boolean}){
 }
 
 function QuestionEditor({question,close,saved}:{question:Question|null;close:()=>void;saved:(q:Question)=>Promise<void>}){
-  const [form,setForm]=useState(()=>({content:question?.content??'',answer:question?.answer??'',analysis:question?.analysis??'',mistakeCause:question?.mistakeCause??'',followupQuestion:question?.followupQuestion??'',ocrText:question?.ocrText??'',source:question?.source??'',knowledgePoints:(question?.knowledgePoints??[]).join('，'),tags:(question?.tags??[]).join('，'),difficulty:question?.difficulty??3,imageData:question?.imageData??'',mediaKind:(question?.artifacts??[]).find(x=>x.kind!=='html')?.kind??'image',mediaUrl:(question?.artifacts??[]).find(x=>x.kind!=='html')?.source??'',htmlTitle:(question?.artifacts??[]).find(x=>x.kind==='html')?.title??'',htmlContent:(question?.artifacts??[]).find(x=>x.kind==='html')?.content??''}))
+  const [form,setForm]=useState(()=>({content:question?.content??'',answer:question?.answer??'',mistakeCause:question?.mistakeCause??'',ocrText:question?.ocrText??'',source:question?.source??'',knowledgePoints:(question?.knowledgePoints??[]).join('，'),tags:(question?.tags??[]).join('，'),difficulty:question?.difficulty??3,imageData:question?.imageData??'',mediaKind:(question?.artifacts??[]).find(x=>x.kind!=='html')?.kind??'image',mediaUrl:(question?.artifacts??[]).find(x=>x.kind!=='html')?.source??'',htmlTitle:(question?.artifacts??[]).find(x=>x.kind==='html')?.title??'',htmlContent:(question?.artifacts??[]).find(x=>x.kind==='html')?.content??''}))
   const [busy,setBusy]=useState(false),[error,setError]=useState('')
   const set=(key:string,value:any)=>setForm(x=>({...x,[key]:value}))
   const chooseImage=async(e:React.ChangeEvent<HTMLInputElement>)=>{const file=e.target.files?.[0];if(!file)return;if(file.size>5_000_000){setError('图片不能超过 5 MB');return}set('imageData',await readImage(file));if(!form.content)set('content',file.name.replace(/\.[^.]+$/,''))}
@@ -232,7 +232,7 @@ function QuestionEditor({question,close,saved}:{question:Question|null;close:()=
   return <div className="dsh-wq-overlay"><article className="dsh-wq-sheet editor"><header><button onClick={close}>×</button><span>{question?'编辑错题':'新建错题'}</span><button className="primary" disabled={busy} onClick={()=>void save()}>{busy?'保存中…':'保存'}</button></header><div className="sheet-body form">
     {error&&<div className="dsh-wq-error">{error}</div>}<label className="image-picker">{form.imageData?<img src={form.imageData} alt="待导入错题"/>:<span>🖼️ 选择错题图片（可选）</span>}<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={e=>void chooseImage(e)}/></label>{form.imageData&&<button className="text-button" onClick={()=>set('imageData','')}>移除图片</button>}
     <Field label="题目" value={form.content} set={v=>set('content',v)} rows={5}/><div className="form-row"><Field label="知识点（逗号分隔）" value={form.knowledgePoints} set={v=>set('knowledgePoints',v)}/><Field label="标签（逗号分隔）" value={form.tags} set={v=>set('tags',v)}/></div><label>难度<select value={form.difficulty} onChange={e=>set('difficulty',e.target.value)}>{[1,2,3,4,5].map(x=><option value={x} key={x}>{x} 星</option>)}</select></label>
-    <Field label="正确答案" value={form.answer} set={v=>set('answer',v)} rows={4}/><Field label="解析" value={form.analysis} set={v=>set('analysis',v)} rows={5}/><Field label="错误原因" value={form.mistakeCause} set={v=>set('mistakeCause',v)} rows={3}/><Field label="举一反三" value={form.followupQuestion} set={v=>set('followupQuestion',v)} rows={3}/><Field label="OCR 文本" value={form.ocrText} set={v=>set('ocrText',v)} rows={3}/><Field label="来源" value={form.source} set={v=>set('source',v)}/>
+    <Field label="正确答案" value={form.answer} set={v=>set('answer',v)} rows={4}/><Field label="错误原因" value={form.mistakeCause} set={v=>set('mistakeCause',v)} rows={3}/><Field label="OCR 文本" value={form.ocrText} set={v=>set('ocrText',v)} rows={3}/><Field label="来源" value={form.source} set={v=>set('source',v)}/>
     <fieldset><legend>媒体与互动内容</legend><div className="form-row"><label>媒体类型<select value={form.mediaKind} onChange={e=>set('mediaKind',e.target.value)}><option value="image">图片</option><option value="video">视频</option></select></label><Field label="媒体 URL" value={form.mediaUrl} set={v=>set('mediaUrl',v)}/></div><Field label="互动卡片标题" value={form.htmlTitle} set={v=>set('htmlTitle',v)}/><Field label="互动卡片 HTML" value={form.htmlContent} set={v=>set('htmlContent',v)} rows={6}/></fieldset>
     <aside className="agent-tip"><b>用 Harness AI 自动填写</b><p>在对话中上传题图并说“分析后加入错题库”。Harness Vision 完成识别后会调用 add_question；对已有记录会调用 analyze_question。</p></aside>
   </div></article></div>
@@ -288,7 +288,7 @@ function get(path:string){return request(path,'GET')}
 function post(path:string,body:any){return request(path,'POST',body)}
 async function request(path:string,method='GET',body?:any){const r=await fetch(API+path,{method,credentials:'same-origin',headers:{'content-type':'application/json','x-dsh-wrong-question-client':'workspace'},body:body===undefined?undefined:JSON.stringify(body)});const data=await r.json().catch(()=>null);if(!r.ok)throw new Error(data?.error||`HTTP ${r.status}`);return data}
 function splitList(value:string){return [...new Set(value.split(/[,，;；\n]/).map(x=>x.trim()).filter(Boolean))]}
-function questionText(q:Question){return [q.content,q.answer,q.analysis,q.mistakeCause,q.ocrText,...q.tags,...q.knowledgePoints].join(' ').toLocaleLowerCase()}
+function questionText(q:Question){return [q.content,q.answer,q.mistakeCause,q.ocrText,...q.tags,...q.knowledgePoints].join(' ').toLocaleLowerCase()}
 function isDue(q:Question){return new Date(q.review.dueAt)<=new Date()}
 function message(e:unknown){return e instanceof Error?e.message:String(e)}
 function labelGrade(g:string){return ({again:'Again',hard:'Hard',good:'Good',easy:'Easy'} as Record<string,string>)[g]}
