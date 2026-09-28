@@ -18,7 +18,6 @@ function parseQuestion(row: any): Question {
     imagePath:image?.source ?? undefined, imageData:image?.content?.startsWith('data:image/') ? image.content : undefined, imageMediaId:image?.id ?? undefined,
     artifacts, ocrText:row.ocr_text ?? undefined, knowledgePoints:parseArray(row.__knowledge_points),
     tags:parseArray(row.__tags), difficulty:Number(row.difficulty ?? 3), mistakeCause:row.mistake_cause ?? undefined,
-    analysis:row.analysis ?? undefined, followupQuestion:row.followup_question ?? undefined,
     createdAt:row.created_at, updatedAt:row.updated_at,
     review:{reps:Number(row.reps ?? 0),ease:Number(row.ease ?? 2.5),intervalDays:Number(row.interval_days ?? 0),dueAt:row.due_at,lastReviewedAt:row.last_reviewed_at ?? undefined}
   }
@@ -46,8 +45,6 @@ export class WrongQuestionDb {
         source TEXT,
         difficulty INTEGER NOT NULL DEFAULT 3 CHECK (difficulty BETWEEN 1 AND 5),
         mistake_cause TEXT,
-        analysis TEXT,
-        followup_question TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
@@ -190,8 +187,7 @@ export class WrongQuestionDb {
         answer,
         knowledge_points,
         tags,
-        mistake_cause,
-        analysis
+        mistake_cause
       );
     `)
   }
@@ -479,9 +475,9 @@ export class WrongQuestionDb {
     const review=old?.review??{reps:0,ease:2.5,intervalDays:0,dueAt:now},created=old?.createdAt??now
     this.db.exec('BEGIN')
     try {
-      this.db.prepare('INSERT INTO questions(id,content,answer,ocr_text,source,difficulty,mistake_cause,analysis,followup_question,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET content=excluded.content,answer=excluded.answer,ocr_text=excluded.ocr_text,source=excluded.source,difficulty=excluded.difficulty,mistake_cause=excluded.mistake_cause,analysis=excluded.analysis,followup_question=excluded.followup_question,updated_at=excluded.updated_at').run(
+      this.db.prepare('INSERT INTO questions(id,content,answer,ocr_text,source,difficulty,mistake_cause,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET content=excluded.content,answer=excluded.answer,ocr_text=excluded.ocr_text,source=excluded.source,difficulty=excluded.difficulty,mistake_cause=excluded.mistake_cause,updated_at=excluded.updated_at').run(
         id,input.content,input.answer??old?.answer??'',input.ocrText??old?.ocrText??null,input.source??old?.source??null,
-        Math.min(5,Math.max(1,Number(input.difficulty??old?.difficulty??3))),input.mistakeCause??old?.mistakeCause??null,input.analysis??old?.analysis??null,input.followupQuestion??old?.followupQuestion??null,created,now)
+        Math.min(5,Math.max(1,Number(input.difficulty??old?.difficulty??3))),input.mistakeCause??old?.mistakeCause??null,created,now)
       this.db.prepare('DELETE FROM question_media WHERE question_id=?').run(id)
       let order=0;const path=input.imagePath??old?.imagePath,data=input.imageData??old?.imageData
       if(path)this.db.prepare('INSERT INTO question_media(id,question_id,kind,source,sort_order,created_at) VALUES(?,?,?,?,?,?)').run(crypto.randomUUID(),id,'image',path,order++,now)
@@ -500,7 +496,7 @@ export class WrongQuestionDb {
     this.reindex(id);const q=this.getQuestion(id)!;void this.graphSync?.upsert?.(q);return q
   }
 
-  private reindex(id:string){const q=this.getQuestion(id);if(!q)return;this.db.prepare('DELETE FROM questions_fts WHERE question_id=?').run(id);this.db.prepare('INSERT INTO questions_fts(question_id,content,ocr_text,answer,knowledge_points,tags,mistake_cause,analysis) VALUES(?,?,?,?,?,?,?,?)').run(id,q.content,q.ocrText??'',q.answer,q.knowledgePoints.join(' '),q.tags.join(' '),q.mistakeCause??'',q.analysis??'')}
+  private reindex(id:string){const q=this.getQuestion(id);if(!q)return;this.db.prepare('DELETE FROM questions_fts WHERE question_id=?').run(id);this.db.prepare('INSERT INTO questions_fts(question_id,content,ocr_text,answer,knowledge_points,tags,mistake_cause) VALUES(?,?,?,?,?,?,?)').run(id,q.content,q.ocrText??'',q.answer,q.knowledgePoints.join(' '),q.tags.join(' '),q.mistakeCause??'')}
 
   delete(id:string){const r=this.db.prepare('DELETE FROM questions WHERE id=?').run(id);this.db.prepare('DELETE FROM questions_fts WHERE question_id=?').run(id);void this.graphSync?.delete?.(id);return Number(r.changes)>0}
 
