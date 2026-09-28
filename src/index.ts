@@ -53,9 +53,73 @@ export function apply(ctx:Context){
   register('update_question','Update a wrong question.',
     {question_id:{type:'string'},content:{type:'string'},answer:{type:'string'},knowledge_points:{type:'array',items:{type:'string'}},tags:{type:'array',items:{type:'string'}},difficulty:{type:'number'},mistake_cause:{type:'string'},analysis:{type:'string'},followup_question:{type:'string'},artifacts},
     ['question_id'],async(a:any)=>{const q=db.getQuestion(a.question_id);if(!q)throw new Error('Question not found');return db.upsert({id:q.id,content:a.content??q.content,answer:a.answer??q.answer,knowledgePoints:a.knowledge_points??q.knowledgePoints,tags:a.tags??q.tags,difficulty:a.difficulty??q.difficulty,mistakeCause:a.mistake_cause??q.mistakeCause,analysis:a.analysis??q.analysis,followupQuestion:a.followup_question??q.followupQuestion,artifacts:a.artifacts??q.artifacts})})
-  register('analyze_question','Save structured Vision/Agent analysis for an existing wrong question.',
-    {question_id:{type:'string'},content:{type:'string'},ocr_text:{type:'string'},answer:{type:'string'},knowledge_points:{type:'array',items:{type:'string'}},tags:{type:'array',items:{type:'string'}},difficulty:{type:'number'},mistake_cause:{type:'string'},analysis:{type:'string'},followup_question:{type:'string'},artifacts},
-    ['question_id'],async(a:any)=>{const q=db.getQuestion(a.question_id);if(!q)throw new Error('Question not found');return db.upsert({id:q.id,content:a.content??q.content,ocrText:a.ocr_text??q.ocrText,answer:a.answer??q.answer,knowledgePoints:a.knowledge_points??q.knowledgePoints,tags:a.tags??q.tags,difficulty:a.difficulty??q.difficulty,mistakeCause:a.mistake_cause??q.mistakeCause,analysis:a.analysis??q.analysis,followupQuestion:a.followup_question??q.followupQuestion,artifacts:a.artifacts??q.artifacts})})
+  register('analyze_question','Save structured Agent/Vision analysis for an existing wrong question. Use this after OCR/reasoning to record the solution, mistake diagnosis, learning gaps, reasoning gaps, correction strategy, and variant suggestions.',
+    {
+      question_id:{type:'string'},
+      content:{type:'string'},
+      ocr_text:{type:'string'},
+      answer:{type:'string'},
+      knowledge_points:{type:'array',items:{type:'string'}},
+      tags:{type:'array',items:{type:'string'}},
+      difficulty:{type:'number'},
+      mistake_cause:{type:'string'},
+      analysis:{type:'string',description:'Legacy free-form summary kept for backward compatibility.'},
+      solution:{type:'string',description:'Correct solution/explanation.'},
+      mistake_type:{type:'string',description:'Normalized mistake category, e.g. concept_gap, calculation, misread, method, reasoning, memory, careless, transfer.'},
+      reasoning_error:{type:'string',description:'The reasoning step or misconception that caused the error.'},
+      learning_gaps:{
+        type:'array',
+        items:{
+          type:'object',
+          additionalProperties:false,
+          properties:{
+            name:{type:'string'},
+            description:{type:'string'},
+            severity:{type:'number'},
+            confidence:{type:'number'}
+          },
+          required:['name']
+        },
+        description:'Concrete things the learner does not yet master.'
+      },
+      reasoning_gaps:{type:'array',items:{type:'string'}},
+      correction_strategy:{type:'array',items:{type:'string'}},
+      variant_suggestions:{type:'array',items:{type:'string'}},
+      confidence:{type:'number'},
+      generated_by:{type:'string'},
+      followup_question:{type:'string'},
+      artifacts
+    },
+    ['question_id'],async(a:any)=>{
+      const q=db.getQuestion(a.question_id)
+      if(!q)throw new Error('Question not found')
+      const updated=db.upsert({
+        id:q.id,
+        content:a.content??q.content,
+        ocrText:a.ocr_text??q.ocrText,
+        answer:a.answer??q.answer,
+        knowledgePoints:a.knowledge_points??q.knowledgePoints,
+        tags:a.tags??q.tags,
+        difficulty:a.difficulty??q.difficulty,
+        mistakeCause:a.mistake_cause??q.mistakeCause,
+        analysis:a.analysis??q.analysis,
+        followupQuestion:a.followup_question??q.followupQuestion,
+        artifacts:a.artifacts??q.artifacts
+      })
+      const structured=db.saveQuestionAnalysis({
+        questionId:updated.id,
+        solution:a.solution,
+        mistakeType:a.mistake_type,
+        reasoningError:a.reasoning_error,
+        knowledgeGaps:a.learning_gaps,
+        reasoningGaps:a.reasoning_gaps,
+        correctionStrategy:a.correction_strategy,
+        variantSuggestions:a.variant_suggestions,
+        confidence:a.confidence,
+        generatedBy:a.generated_by
+      })
+      return {question:updated,analysis:structured,learningGaps:db.getLearningGaps(20)}
+    })
   register('delete_question','Delete a wrong question.',
     {question_id:{type:'string'}},['question_id'],async(a:any)=>({deleted:db.delete(a.question_id)}))
   register('list_questions','List wrong questions.',
@@ -70,6 +134,71 @@ export function apply(ctx:Context){
   register('recall_wrong_questions','Use before answering a new academic question to recall related past mistakes and adapt the explanation. Pass the user question as query.',
     {query:{type:'string'},limit:{type:'integer'}},['query'],
     async(a:any)=>db.recall(a.query,Math.min(10,a.limit??5)))
+  register('add_question_variant','Create a targeted variant of an existing wrong question. Use after analysis to generate same-level, number-change, condition-change, reverse, reasoning, or transfer practice.',
+    {
+      question_id:{type:'string'},
+      variant_type:{type:'string'},
+      content:{type:'string'},
+      answer:{type:'string'},
+      analysis:{type:'string'},
+      difficulty:{type:'number'},
+      source:{type:'string'},
+      generated_by:{type:'string'}
+    },
+    ['question_id','variant_type','content'],
+    async(a:any)=>db.addQuestionVariant({
+      questionId:a.question_id,
+      variantType:a.variant_type,
+      content:a.content,
+      answer:a.answer,
+      analysis:a.analysis,
+      difficulty:a.difficulty,
+      source:a.source,
+      generatedBy:a.generated_by
+    }))
+
+  register('list_question_variants','List generated variants for a wrong question.',
+    {
+      question_id:{type:'string'},
+      limit:{type:'integer'}
+    },
+    ['question_id'],
+    async(a:any)=>db.listQuestionVariants(a.question_id,a.limit??20))
+
+  register('record_question_attempt','Record the learner\'s actual attempt on a wrong question. Keep this separate from Again/Hard/Good/Easy review scheduling.',
+    {
+      question_id:{type:'string'},
+      user_answer:{type:'string'},
+      is_correct:{type:'boolean'},
+      score:{type:'number'},
+      time_spent_ms:{type:'integer'},
+      mistake_cause:{type:'string'},
+      analysis:{type:'string'}
+    },
+    ['question_id'],
+    async(a:any)=>db.recordQuestionAttempt({
+      questionId:a.question_id,
+      userAnswer:a.user_answer,
+      isCorrect:a.is_correct,
+      score:a.score,
+      timeSpentMs:a.time_spent_ms,
+      mistakeCause:a.mistake_cause,
+      analysis:a.analysis
+    }))
+
+  register('list_question_attempts','List recent actual attempts for a wrong question.',
+    {
+      question_id:{type:'string'},
+      limit:{type:'integer'}
+    },
+    ['question_id'],
+    async(a:any)=>db.listQuestionAttempts(a.question_id,a.limit??20))
+
+  register('get_learning_gaps','Get the learner\'s current learning gaps aggregated from analyzed wrong questions. Use this instead of treating raw knowledge-point counts as mastery.',
+    {limit:{type:'integer'}},
+    [],
+    async(a:any)=>db.getLearningGaps(a.limit??20))
+
   register('review_question','Review a question using Again/Hard/Good/Easy.',
     {question_id:{type:'string'},grade:{type:'string',enum:['again','hard','good','easy']}},['question_id','grade'],
     async(a:any)=>{const q=db.getQuestion(a.question_id);if(!q)throw new Error('Question not found');const grade=a.grade as ReviewGrade;return db.review(q.id,grade,scheduleReview(q.review,grade).state)})
