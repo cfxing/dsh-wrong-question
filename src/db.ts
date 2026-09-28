@@ -536,6 +536,23 @@ export class WrongQuestionDb {
     return[...found.values()].slice(0,limit)
   }
 
+  findSimilar(id:string,limit=10):SearchHit[]{
+    const source=this.getQuestion(id)
+    if(!source)throw new Error('Question not found')
+    const sourceTerms=terms(source.content+' '+(source.ocrText??'')+' '+(source.mistakeCause??''))
+    return this.all()
+      .filter(q=>q.id!==id)
+      .map(question=>{
+        const kp=jaccard(source.knowledgePoints,question.knowledgePoints)
+        const tags=jaccard(source.tags,question.tags)
+        const text=jaccard(sourceTerms,terms(question.content+' '+(question.ocrText??'')+' '+(question.mistakeCause??'')))
+        return {question,score:Number((kp*.5+tags*.25+text*.25).toFixed(4)),matchType:'similarity' as const}
+      })
+      .filter(x=>x.score>0)
+      .sort((a,b)=>b.score-a.score)
+      .slice(0,Math.min(50,Math.max(1,limit)))
+  }
+
   recall(query:string,limit=5):SearchHit[]{
     const exact=this.search(query,limit),found=new Map(exact.map(x=>[x.question.id,x])),qt=terms(query)
     const rows=this.db.prepare('SELECT question_id,solution,mistake_type,reasoning_error,knowledge_gaps,reasoning_gaps,correction_strategy,variant_suggestions FROM question_analyses').all() as any[]
