@@ -113,12 +113,16 @@ export interface Dashboard {
   streak: number
   reviewCount: number
   successRate: number
-  knowledgePoints: Array<{ name: string; questionCount: number; mastery: number }>
-  weakPoints: Array<{ name: string; questionCount: number; mastery: number }>
+  attemptCount: number
+  attemptAccuracy: number
+  learningGapCount: number
+  knowledgePoints: Array<{ name: string; questionCount: number; mastery: number; accuracy: number; gapCount: number }>
+  weakPoints: Array<{ name: string; questionCount: number; mastery: number; accuracy: number; gapCount: number }>
   activity: Array<{ date: string; count: number }>
   reviewTrend: Array<{ date: string; reviews: number; successRate: number }>
   masteryTrend: Array<{ date: string; mastered: number }>
   mistakeCauses: Array<{ name: string; count: number }>
+  learningGaps: Array<{ name: string; questionCount: number; dueCount: number; severity: number; confidence: number }>
   difficulty: Array<{ level: number; count: number }>
   reviewCompletionRate: number
   weeklyReport: {
