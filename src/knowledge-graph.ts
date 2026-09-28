@@ -33,7 +33,7 @@ export class KnowledgeGraph {
   private async q(text:string):Promise<Record<string,unknown>[]> {const rs=await this.conn.query(text);const res=Array.isArray(rs)?rs[0]:rs;return(await res.getAll()) as Record<string,unknown>[]}
 
   async upsertQuestion(q:Question){
-    const text=[q.content,q.answer,q.analysis,q.mistakeCause,q.ocrText,...q.knowledgePoints,...q.tags].filter((x):x is string=>!!x).join(' ')
+    const text=[q.content,q.answer,q.mistakeCause,q.ocrText,...q.knowledgePoints,...q.tags].filter((x):x is string=>!!x).join(' ')
     const vec=await this.embedder.embed(text),lit='['+vec.join(',')+']',id=this.esc(q.id)
     await this.q("MERGE (n:Question {id:'"+id+"'}) SET n.text='"+this.esc(text)+"', n.embedding="+lit+", n.source='"+this.esc(q.source??'')+"', n.updatedAt='"+this.esc(q.updatedAt)+"'")
     for(const rel of ['HAS_POINT','HAS_TAG','HAS_CAUSE'])await this.q("MATCH (n:Question {id:'"+id+"'})-[r:"+rel+"]->() DELETE r").catch(()=>{})
