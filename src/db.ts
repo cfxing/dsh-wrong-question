@@ -233,6 +233,30 @@ export class WrongQuestionDb {
 
   getMedia(questionId:string,mediaId:string){return this.db.prepare('SELECT * FROM question_media WHERE id=? AND question_id=?').get(mediaId,questionId) as any ?? null}
 
+  getQuestionDetail(questionId:string){
+    const question=this.getQuestion(questionId)
+    if(!question)return null
+    const learningGaps=this.db.prepare(`
+      SELECT g.id,g.name,g.description,g.severity,g.created_at,g.updated_at,qlg.confidence,qlg.severity AS question_severity
+      FROM learning_gaps g
+      JOIN question_learning_gaps qlg ON qlg.gap_id=g.id
+      WHERE qlg.question_id=?
+      ORDER BY qlg.severity DESC,g.name
+    `).all(questionId) as any[]
+    return {
+      question,
+      analysis:this.getQuestionAnalysis(questionId),
+      learningGaps:learningGaps.map(g=>({
+        id:String(g.id),name:String(g.name),description:g.description??undefined,
+        severity:Number(g.question_severity??g.severity??0),
+        confidence:Number(g.confidence??0),
+        createdAt:String(g.created_at),updatedAt:String(g.updated_at)
+      })),
+      variants:this.listQuestionVariants(questionId,100),
+      attempts:this.listQuestionAttempts(questionId,100)
+    }
+  }
+
   getQuestionAnalysis(questionId:string):WrongQuestionAnalysis|null{
     const row=this.db.prepare('SELECT * FROM question_analyses WHERE question_id=?').get(questionId) as any
     if(!row)return null
