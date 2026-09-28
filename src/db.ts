@@ -217,6 +217,24 @@ export class WrongQuestionDb {
 
   getMedia(questionId:string,mediaId:string){return this.db.prepare('SELECT * FROM question_media WHERE id=? AND question_id=?').get(mediaId,questionId) as any ?? null}
 
+  addQuestionImage(input:{questionId:string;source:string;mimeType?:string;title?:string}){
+    if(!this.getQuestion(input.questionId))throw new Error('Question not found')
+    const existing=this.db.prepare('SELECT * FROM question_media WHERE question_id=? AND kind=\'image\' AND source=? LIMIT 1')
+      .get(input.questionId,input.source) as any
+    if(existing){
+      return {
+        id:String(existing.id),questionId:String(existing.question_id),kind:'image' as const,
+        title:existing.title??undefined,source:String(existing.source),mimeType:existing.mime_type??undefined
+      }
+    }
+    const id=crypto.randomUUID(),now=new Date().toISOString()
+    const order=Number((this.db.prepare('SELECT COALESCE(MAX(sort_order),-1)+1 AS next FROM question_media WHERE question_id=?')
+      .get(input.questionId) as any).next??0)
+    this.db.prepare('INSERT INTO question_media(id,question_id,kind,title,source,mime_type,sort_order,created_at) VALUES(?,?,?,?,?,?,?,?)')
+      .run(id,input.questionId,'image',input.title??null,input.source,input.mimeType??null,order,now)
+    return {id,questionId:input.questionId,kind:'image' as const,title:input.title,source:input.source,mimeType:input.mimeType}
+  }
+
   getQuestionDetail(questionId:string){
     const question=this.getQuestion(questionId)
     if(!question)return null
