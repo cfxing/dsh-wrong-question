@@ -45,7 +45,7 @@ export function apply(ctx:Context){
       name, description,
       parameters:{type:'object',additionalProperties:false,properties,required},
       output:{schema:{type:'string'},render:(_args:any,value:string)=>[{type:'text',text:value}]},
-      execute:async(args:any)=>toToolJson(await execute(args))
+      execute:async(args:any,exec:any)=>toToolJson(await execute(args,exec))
     })
   }
   register('add_question','Create a wrong-question record. When the current user turn contains durable image attachments and no explicit image_path/image_data is supplied, automatically copy those images into the wrong-question media directory and link them to the new record.',
@@ -68,7 +68,7 @@ export function apply(ctx:Context){
     async(a:any)=>{const detail=db.getQuestionDetail(a.question_id);if(!detail)throw new Error('Question not found');return detail})
   register('update_question','Update a wrong question.',
     {question_id:{type:'string'},content:{type:'string'},answer:{type:'string'},knowledge_points:{type:'array',items:{type:'string'}},tags:{type:'array',items:{type:'string'}},difficulty:{type:'number'},mistake_cause:{type:'string'},analysis:{type:'string'},followup_question:{type:'string'},artifacts},
-    ['question_id'],async(a:any)=>{const q=db.getQuestion(a.question_id);if(!q)throw new Error('Question not found');return db.upsert({id:q.id,content:a.content??q.content,answer:a.answer??q.answer,knowledgePoints:a.knowledge_points??q.knowledgePoints,tags:a.tags??q.tags,difficulty:a.difficulty??q.difficulty,mistakeCause:a.mistake_cause??q.mistakeCause,analysis:a.analysis??q.analysis,followupQuestion:a.followup_question??q.followupQuestion,artifacts:a.artifacts??q.artifacts})})
+    ['question_id'],async(a:any,exec:any)=>{const q=db.getQuestion(a.question_id);if(!q)throw new Error('Question not found');return db.upsert({id:q.id,content:a.content??q.content,answer:a.answer??q.answer,knowledgePoints:a.knowledge_points??q.knowledgePoints,tags:a.tags??q.tags,difficulty:a.difficulty??q.difficulty,mistakeCause:a.mistake_cause??q.mistakeCause,analysis:a.analysis??q.analysis,followupQuestion:a.followup_question??q.followupQuestion,artifacts:a.artifacts??q.artifacts})})
   register('analyze_question','Save structured Agent/Vision analysis for an existing wrong question. Use this after OCR/reasoning to record the solution, mistake diagnosis, learning gaps, reasoning gaps, correction strategy, and variant suggestions.',
     {
       question_id:{type:'string'},
