@@ -125,11 +125,21 @@ export function apply(ctx:Context){
         artifacts:a.artifacts??q.artifacts
       })
       const imported=await persistCurrentTurnImages(exec,(ctx as any).attachments??(ctx as any).get?.('attachments'),wrongQuestionDir(),updated.id,currentTurnImages.refsFor(exec.agent?.session))
-      for(const image of imported)db.addQuestionImage({questionId:updated.id,source:image.path,mimeType:image.mimeType,title:image.name})
-      if(a.artifacts!==undefined){
-        const persistedArtifacts=await persistQuestionArtifacts(exec,a.artifacts,wrongQuestionDir(),updated.id)
-        db.upsert({...updated,artifacts:persistedArtifacts})
-      }
+      const persistedArtifacts=await persistQuestionArtifacts(exec,a.artifacts??[],wrongQuestionDir(),updated.id)
+      const importedImages=imported.slice(1).map(image=>({kind:'image' as const,title:image.name,source:image.path}))
+      const previousPrimaryImage=imported.length===0&&updated.imagePath
+        ? []
+        : (updated.imagePath&&imported[0]?.path!==updated.imagePath
+          ? [{kind:'image' as const,title:'原有题目图片',source:updated.imagePath}]
+          : [])
+      const mergedArtifacts=[
+        ...persistedArtifacts,
+        ...importedImages,
+        ...previousPrimaryImage
+      ]
+      const persistedQuestion=mergedArtifacts.length>0||imported[0]
+        ? db.upsert({...updated,imagePath:imported[0]?.path??updated.imagePath,artifacts:mergedArtifacts})
+        : updated
       const structured=db.saveQuestionAnalysis({
         questionId:updated.id,
         solution:a.solution,
