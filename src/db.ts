@@ -511,13 +511,46 @@ export class WrongQuestionDb {
 
   search(query:string,limit=10):SearchHit[]{
     const tokens=searchTokens(query);if(!tokens.length)return[];const found=new Map<string,SearchHit>()
-    try{const match=tokens.map(t=>'"'+t.replaceAll('"','""')+'"').join(' OR ');const rows=this.db.prepare('SELECT q.*,rs.reps,rs.ease,rs.interval_days,rs.due_at,rs.last_reviewed_at,bm25(questions_fts) rank FROM questions_fts f JOIN questions q ON q.id=f.question_id JOIN review_states rs ON rs.question_id=q.id WHERE questions_fts MATCH ? ORDER BY rank LIMIT ?').all(match,limit) as any[];for(const q of this.hydrate(rows))found.set(q.id,{question:q,score:1,matchType:'fts'})}catch{}
-    if(found.size<limit){const rows=this.db.prepare('SELECT q.*,rs.reps,rs.ease,rs.interval_days,rs.due_at,rs.last_reviewed_at FROM questions q JOIN review_states rs ON rs.question_id=q.id WHERE lower(q.content||" "||q.answer||" "||coalesce(q.ocr_text,"")||" "||coalesce(q.mistake_cause,"")||" "||coalesce(q.analysis,"")) LIKE ? ORDER BY q.updated_at DESC LIMIT ?').all('%'+query.trim().toLocaleLowerCase()+'%',limit-found.size) as any[];for(const q of this.hydrate(rows))if(!found.has(q.id))found.set(q.id,{question:q,score:.5,matchType:'fts'})}
+    try{
+      const match=tokens.map(t=>'"'+t.replaceAll('"','""')+'"').join(' OR ')
+      const rows=this.db.prepare('SELECT q.*,rs.reps,rs.ease,rs.interval_days,rs.due_at,rs.last_reviewed_at,bm25(questions_fts) rank FROM questions_fts f JOIN questions q ON q.id=f.question_id JOIN review_states rs ON rs.question_id=q.id WHERE questions_fts MATCH ? ORDER BY rank LIMIT ?').all(match,limit) as any[]
+      for(const q of this.hydrate(rows))found.set(q.id,{question:q,score:1,matchType:'fts'})
+    }catch{}
+    if(found.size<limit){
+      const rows=this.db.prepare(`
+        SELECT q.*,rs.reps,rs.ease,rs.interval_days,rs.due_at,rs.last_reviewed_at
+        FROM questions q
+        JOIN review_states rs ON rs.question_id=q.id
+        LEFT JOIN question_analyses qa ON qa.question_id=q.id
+        WHERE lower(
+          coalesce(q.content,'')||' '||coalesce(q.answer,'')||' '||coalesce(q.ocr_text,'')||' '||
+          coalesce(q.mistake_cause,'')||' '||coalesce(qa.solution,'')||' '||
+          coalesce(qa.mistake_type,'')||' '||coalesce(qa.reasoning_error,'')||' '||
+          coalesce(qa.knowledge_gaps,'')||' '||coalesce(qa.reasoning_gaps,'')||' '||
+          coalesce(qa.correction_strategy,'')||' '||coalesce(qa.variant_suggestions,'')
+        ) LIKE ?
+        ORDER BY q.updated_at DESC LIMIT ?
+      `).all('%'+query.trim().toLocaleLowerCase()+'%',limit-found.size) as any[]
+      for(const q of this.hydrate(rows))if(!found.has(q.id))found.set(q.id,{question:q,score:.5,matchType:'fts'})
+    }
     return[...found.values()].slice(0,limit)
   }
 
-  findSimilar(id:string,limit=10):SearchHit[]{const source=this.getQuestion(id);if(!source)throw new Error('Question not found');const st=terms(source.content+' '+source.ocrText);return this.all().filter(q=>q.id!==id).map(q=>({question:q,score:Number((jaccard(source.knowledgePoints,q.knowledgePoints)*.5+jaccard(source.tags,q.tags)*.25+jaccard(st,terms(q.content+' '+q.ocrText))*.25).toFixed(4)),matchType:'similarity' as const})).filter(x=>x.score>0).sort((a,b)=>b.score-a.score).slice(0,limit)}
-  recall(query:string,limit=5):SearchHit[]{const exact=this.search(query,limit),found=new Map(exact.map(x=>[x.question.id,x])),qt=terms(query);for(const q of this.all()){if(found.has(q.id))continue;const score=jaccard(qt,terms(q.content+' '+(q.ocrText??'')+' '+(q.analysis??'')));if(score>=.08)found.set(q.id,{question:q,score:Number(score.toFixed(4)),matchType:'similarity'})}return[...found.values()].sort((a,b)=>b.score-a.score).slice(0,limit)}
+  recall(query:string,limit=5):SearchHit[]{
+    const exact=this.search(query,limit),found=new Map(exact.map(x=>[x.question.id,x])),qt=terms(query)
+    const rows=this.db.prepare('SELECT question_id,solution,mistake_type,reasoning_error,knowledge_gaps,reasoning_gaps,correction_strategy,variant_suggestions FROM question_analyses').all() as any[]
+    const byQuestion=new Map(rows.map(row=>[String(row.question_id),row]))
+    for(const q of this.all()){
+      if(found.has(q.id))continue
+      const a=byQuestion.get(q.id)
+      const analysisText=a
+        ? [a.solution,a.mistake_type,a.reasoning_error,a.knowledge_gaps,a.reasoning_gaps,a.correction_strategy,a.variant_suggestions].filter(Boolean).join(' ')
+        : ''
+      const score=jaccard(qt,terms(q.content+' '+(q.ocrText??'')+' '+(q.mistakeCause??'')+' '+analysisText))
+      if(score>=.08)found.set(q.id,{question:q,score:Number(score.toFixed(4)),matchType:'similarity'})
+    }
+    return[...found.values()].sort((a,b)=>b.score-a.score).slice(0,limit)
+  }
   due(limit=20){return this.list({limit,dueOnly:true})}
 
   review(id:string,grade:ReviewGrade,next:ReviewState):ReviewLog{
