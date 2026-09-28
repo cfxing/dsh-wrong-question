@@ -2,6 +2,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { mkdirSync } from 'node:fs'
+import { persistCurrentTurnImages } from './image-import.js'
 import { WrongQuestionDb } from './db.js'
 import type { GraphSyncHook } from './db.js'
 import { scheduleReview } from './review.js'
@@ -14,7 +15,8 @@ import { hybridSearch } from './hybrid.js'
 export const name='wrong-question'
 export const inject=['tools']
 
-function dbPath(){const home=process.env.DSH_HOME||join(homedir(),'.dsh');const dir=join(home,'wrong-question');mkdirSync(dir,{recursive:true});return join(dir,'wrong-questions.sqlite')}
+function wrongQuestionDir(){const home=process.env.DSH_HOME||join(homedir(),'.dsh');const dir=join(home,'wrong-question');mkdirSync(dir,{recursive:true});return dir}
+function dbPath(){return join(wrongQuestionDir(),'wrong-questions.sqlite')}
 
 export function apply(ctx:Context){
   const embedder = new OllamaEmbedder()
@@ -45,9 +47,21 @@ export function apply(ctx:Context){
       execute:async(args:any)=>toToolJson(await execute(args))
     })
   }
-  register('add_question','Create a wrong-question record.',
+  register('add_question','Create a wrong-question record. When the current user turn contains durable image attachments and no explicit image_path/image_data is supplied, automatically copy those images into the wrong-question media directory and link them to the new record.',
     {content:{type:'string'},answer:{type:'string'},knowledge_points:{type:'array',items:{type:'string'}},tags:{type:'array',items:{type:'string'}},difficulty:{type:'number'},mistake_cause:{type:'string'},analysis:{type:'string'},followup_question:{type:'string'},source:{type:'string'},image_path:{type:'string'},image_data:{type:'string',description:'Optional data:image/... base64 URL from the workspace.'},artifacts,ocr_text:{type:'string'}},
-    ['content'],async(a:any)=>db.upsert({content:a.content,answer:a.answer,knowledgePoints:a.knowledge_points,tags:a.tags,difficulty:a.difficulty,mistakeCause:a.mistake_cause,analysis:a.analysis,followupQuestion:a.followup_question,source:a.source,imagePath:a.image_path,imageData:a.image_data,artifacts:a.artifacts,ocrText:a.ocr_text}))
+    ['content'],async(a:any,exec:any)=>{
+      const id=crypto.randomUUID()
+      const imported=!a.image_path&&!a.image_data
+        ? await persistCurrentTurnImages(exec,(ctx as any).attachments??(ctx as any).get?.('attachments'),wrongQuestionDir(),id)
+        : []
+      const extraArtifacts=imported.slice(1).map(image=>({kind:'image' as const,title:image.name,source:image.path}))
+      return db.upsert({
+        id,content:a.content,answer:a.answer,knowledgePoints:a.knowledge_points,tags:a.tags,difficulty:a.difficulty,
+        mistakeCause:a.mistake_cause,analysis:a.analysis,followupQuestion:a.followup_question,source:a.source,
+        imagePath:a.image_path??imported[0]?.path,
+        imageData:a.image_data,artifacts:[...(a.artifacts??[]),...extraArtifacts],ocrText:a.ocr_text
+      })
+    })
   register('get_question','Get one wrong question together with structured analysis, learning gaps, generated variants, and recent attempts.',
     {question_id:{type:'string'}},['question_id'],
     async(a:any)=>{const detail=db.getQuestionDetail(a.question_id);if(!detail)throw new Error('Question not found');return detail})
@@ -107,6 +121,8 @@ export function apply(ctx:Context){
         followupQuestion:a.followup_question??q.followupQuestion,
         artifacts:a.artifacts??q.artifacts
       })
+      const imported=await persistCurrentTurnImages(exec,(ctx as any).attachments??(ctx as any).get?.('attachments'),wrongQuestionDir(),updated.id)
+      for(const image of imported)db.addQuestionImage({questionId:updated.id,source:image.path,mimeType:image.mimeType,title:image.name})
       const structured=db.saveQuestionAnalysis({
         questionId:updated.id,
         solution:a.solution,
