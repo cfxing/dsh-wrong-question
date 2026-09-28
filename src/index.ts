@@ -3,6 +3,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { mkdirSync } from 'node:fs'
 import { createCurrentTurnImageTracker, persistCurrentTurnImages } from './image-import.js'
+import { persistQuestionArtifacts } from './media-import.js'
 import { WrongQuestionDb } from './db.js'
 import type { GraphSyncHook } from './db.js'
 import { scheduleReview } from './review.js'
@@ -55,12 +56,13 @@ export function apply(ctx:Context){
       const imported=!a.image_path&&!a.image_data
         ? await persistCurrentTurnImages(exec,(ctx as any).attachments??(ctx as any).get?.('attachments'),wrongQuestionDir(),id,currentTurnImages.refsFor(exec.agent?.session))
         : []
+      const persistedArtifacts=await persistQuestionArtifacts(exec,a.artifacts??[],wrongQuestionDir(),id)
       const extraArtifacts=imported.slice(1).map(image=>({kind:'image' as const,title:image.name,source:image.path}))
       return db.upsert({
         id,content:a.content,answer:a.answer,knowledgePoints:a.knowledge_points,tags:a.tags,difficulty:a.difficulty,
         mistakeCause:a.mistake_cause,analysis:a.analysis,followupQuestion:a.followup_question,source:a.source,
         imagePath:a.image_path??imported[0]?.path,
-        imageData:a.image_data,artifacts:[...(a.artifacts??[]),...extraArtifacts],ocrText:a.ocr_text
+        imageData:a.image_data,artifacts:[...persistedArtifacts,...extraArtifacts],ocrText:a.ocr_text
       })
     })
   register('get_question','Get one wrong question together with structured analysis, learning gaps, generated variants, and recent attempts.',
@@ -124,6 +126,10 @@ export function apply(ctx:Context){
       })
       const imported=await persistCurrentTurnImages(exec,(ctx as any).attachments??(ctx as any).get?.('attachments'),wrongQuestionDir(),updated.id,currentTurnImages.refsFor(exec.agent?.session))
       for(const image of imported)db.addQuestionImage({questionId:updated.id,source:image.path,mimeType:image.mimeType,title:image.name})
+      if(a.artifacts!==undefined){
+        const persistedArtifacts=await persistQuestionArtifacts(exec,a.artifacts,wrongQuestionDir(),updated.id)
+        db.upsert({...updated,artifacts:persistedArtifacts})
+      }
       const structured=db.saveQuestionAnalysis({
         questionId:updated.id,
         solution:a.solution,
