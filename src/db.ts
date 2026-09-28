@@ -510,19 +510,132 @@ export class WrongQuestionDb {
   all(){return this.hydrate(this.db.prepare('SELECT q.*,rs.reps,rs.ease,rs.interval_days,rs.due_at,rs.last_reviewed_at FROM questions q JOIN review_states rs ON rs.question_id=q.id ORDER BY q.created_at ASC').all() as any[])}
 
   dashboard():Dashboard{
-    const qs=this.all(),logs=this.logs(10000),now=new Date(),due=qs.filter(q=>isDue(q.review,now)).length,reviewed=qs.filter(q=>q.review.reps>0).length,mastered=qs.filter(q=>q.review.reps>=3&&q.review.intervalDays>=14).length
-    const kp=new Map<string,{count:number;reviewed:number;interval:number}>()
-    for(const q of qs)for(const p of q.knowledgePoints){const x=kp.get(p)??{count:0,reviewed:0,interval:0};x.count++;if(q.review.reps>0)x.reviewed++;x.interval+=Math.min(1,q.review.intervalDays/30);kp.set(p,x)}
-    const knowledgePoints=[...kp.entries()].map(([name,x])=>({name,questionCount:x.count,mastery:Math.round(((x.reviewed/x.count)*.7+(x.interval/x.count)*.3)*100)})).sort((a,b)=>a.mastery-b.mastery)
-    const activityMap=new Map<string,number>();for(const l of logs)activityMap.set(l.reviewedAt.slice(0,10),(activityMap.get(l.reviewedAt.slice(0,10))??0)+1)
-    let d=new Date(now);d.setHours(0,0,0,0);let streak=0;while(activityMap.has(d.toISOString().slice(0,10))){streak++;d.setDate(d.getDate()-1)}
-    const success=logs.filter(l=>l.quality>=3).length,days=lastDays(30,now),daily=new Map<string,ReviewLog[]>();for(const l of logs){const date=l.reviewedAt.slice(0,10);const x=daily.get(date)??[];x.push(l);daily.set(date,x)}
+    const qs=this.all(),logs=this.logs(10000),now=new Date()
+    const attempts=this.db.prepare('SELECT * FROM question_attempts ORDER BY attempted_at DESC').all() as any[]
+    const validAttempts=attempts.filter(a=>a.is_correct!==null)
+    const due=qs.filter(q=>isDue(q.review,now)).length
+    const reviewed=qs.filter(q=>q.review.reps>0).length
+    const attemptAccuracy=validAttempts.length?validAttempts.filter(a=>Number(a.is_correct)===1).length/validAttempts.length:0
+
+    const attemptsByQuestion=new Map<string,{correct:number;total:number;latest?:string}>()
+    for(const a of validAttempts){
+      const x=attemptsByQuestion.get(String(a.question_id))??{correct:0,total:0}
+      x.total++
+      if(Number(a.is_correct)===1)x.correct++
+      if(!x.latest||String(a.attempted_at)>x.latest)x.latest=String(a.attempted_at)
+      attemptsByQuestion.set(String(a.question_id),x)
+    }
+
+    const gapRows=this.db.prepare('SELECT question_id,gap_id,severity,confidence FROM question_learning_gaps').all() as any[]
+    const gapsByQuestion=new Map<string,{severity:number;confidence:number;count:number}>()
+    for(const g of gapRows){
+      const key=String(g.question_id),x=gapsByQuestion.get(key)??{severity:0,confidence:0,count:0}
+      x.severity+=Number(g.severity??0)
+      x.confidence+=Number(g.confidence??0)
+      x.count++
+      gapsByQuestion.set(key,x)
+    }
+
+    const questionMastery=(q:Question)=>{
+      const reviewProgress=Math.min(1,q.review.reps/3)*0.7+Math.min(1,q.review.intervalDays/30)*0.3
+      const a=attemptsByQuestion.get(q.id)
+      if(!a||!a.total)return reviewProgress
+      const accuracy=a.correct/a.total
+      return accuracy*0.65+reviewProgress*0.35
+    }
+
+    const mastered=qs.filter(q=>{
+      const m=questionMastery(q),a=attemptsByQuestion.get(q.id)
+      return m>=0.8&&((a?.total??0)>=2||q.review.reps>=3)
+    }).length
+
+    const kp=new Map<string,{count:number;mastery:number;correct:number;attempts:number;gaps:number}>()
+    for(const q of qs){
+      const mastery=questionMastery(q)
+      const a=attemptsByQuestion.get(q.id)
+      const gapCount=gapsByQuestion.get(q.id)?.count??0
+      for(const p of q.knowledgePoints){
+        const x=kp.get(p)??{count:0,mastery:0,correct:0,attempts:0,gaps:0}
+        x.count++
+        x.mastery+=mastery
+        x.gaps+=gapCount
+        if(a){x.correct+=a.correct;x.attempts+=a.total}
+        kp.set(p,x)
+      }
+    }
+
+    const knowledgePoints=[...kp.entries()].map(([name,x])=>({
+      name,
+      questionCount:x.count,
+      mastery:Math.round((x.mastery/x.count)*100),
+      accuracy:x.attempts?Number((x.correct/x.attempts).toFixed(3)):0,
+      gapCount:x.gaps
+    })).sort((a,b)=>a.mastery-b.mastery)
+
+    const activityMap=new Map<string,number>()
+    for(const l of logs)activityMap.set(l.reviewedAt.slice(0,10),(activityMap.get(l.reviewedAt.slice(0,10))??0)+1)
+    for(const a of attempts)activityMap.set(String(a.attempted_at).slice(0,10),(activityMap.get(String(a.attempted_at).slice(0,10))??0)+1)
+
+    let d=new Date(now);d.setHours(0,0,0,0);let streak=0
+    while(activityMap.has(d.toISOString().slice(0,10))){streak++;d.setDate(d.getDate()-1)}
+
+    const success=logs.filter(l=>l.quality>=3).length
+    const days=lastDays(30,now)
+    const daily=new Map<string,ReviewLog[]>()
+    for(const l of logs){const date=l.reviewedAt.slice(0,10);const x=daily.get(date)??[];x.push(l);daily.set(date,x)}
     const reviewTrend=days.map(date=>{const x=daily.get(date)??[];return{date,reviews:x.length,successRate:x.length?Number((x.filter(v=>v.quality>=3).length/x.length).toFixed(3)):0}})
-    const masteryTrend=days.map(date=>({date,mastered:qs.filter(q=>q.review.reps>=3&&q.review.intervalDays>=14&&(q.review.lastReviewedAt??q.createdAt).slice(0,10)<=date).length}))
-    const mm=new Map<string,number>();for(const q of qs){const c=(q.mistakeCause??'未分类').trim()||'未分类';mm.set(c,(mm.get(c)??0)+1)}
-    const mistakeCauses=[...mm].map(([name,count])=>({name,count})).sort((a,b)=>b.count-a.count).slice(0,10),difficulty=[1,2,3,4,5].map(level=>({level,count:qs.filter(q=>q.difficulty===level).length}))
-    const seven=new Date(now);seven.setDate(seven.getDate()-6);seven.setHours(0,0,0,0);const weekly=logs.filter(x=>new Date(x.reviewedAt)>=seven),active=new Set(weekly.map(x=>x.reviewedAt.slice(0,10))),ordered=[...knowledgePoints].sort((a,b)=>b.mastery-a.mastery)
-    return{totalQuestions:qs.length,reviewed,due,mastered,streak,reviewCount:logs.length,successRate:logs.length?Number((success/logs.length).toFixed(3)):0,knowledgePoints,weakPoints:knowledgePoints.slice(0,10),activity:[...activityMap.entries()].sort().slice(-30).map(([date,count])=>({date,count})),reviewTrend,masteryTrend,mistakeCauses,difficulty,reviewCompletionRate:reviewed+due?Number((reviewed/(reviewed+due)).toFixed(3)):0,weeklyReport:{added:qs.filter(x=>new Date(x.createdAt)>=seven).length,reviews:weekly.length,successfulReviews:weekly.filter(x=>x.quality>=3).length,activeDays:active.size,strongestKnowledgePoint:ordered[0]?.name,weakestKnowledgePoint:knowledgePoints[0]?.name}}
+    const masteryTrend=days.map(date=>({date,mastered:qs.filter(q=>questionMastery(q)>=0.8&&(q.review.lastReviewedAt??q.createdAt).slice(0,10)<=date).length}))
+
+    const mm=new Map<string,number>()
+    for(const q of qs){const c=(q.mistakeCause??'未分类').trim()||'未分类';mm.set(c,(mm.get(c)??0)+1)}
+    const mistakeCauses=[...mm].map(([name,count])=>({name,count})).sort((a,b)=>b.count-a.count).slice(0,10)
+    const difficulty=[1,2,3,4,5].map(level=>({level,count:qs.filter(q=>q.difficulty===level).length}))
+    const learningGaps=this.getLearningGaps(10)
+    const weakPoints=knowledgePoints.slice(0,10)
+    const seven=new Date(now);seven.setDate(seven.getDate()-6);seven.setHours(0,0,0,0)
+    const weekly=logs.filter(x=>new Date(x.reviewedAt)>=seven)
+    const weeklyAttempts=validAttempts.filter(x=>new Date(String(x.attempted_at))>=seven)
+    const active=new Set<string>([
+      ...weekly.map(x=>x.reviewedAt.slice(0,10)),
+      ...weeklyAttempts.map(x=>String(x.attempted_at).slice(0,10))
+    ])
+    const ordered=[...knowledgePoints].sort((a,b)=>b.mastery-a.mastery)
+
+    return{
+      totalQuestions:qs.length,
+      reviewed,
+      due,
+      mastered,
+      streak,
+      reviewCount:logs.length,
+      successRate:logs.length?Number((success/logs.length).toFixed(3)):0,
+      attemptCount:validAttempts.length,
+      attemptAccuracy:Number(attemptAccuracy.toFixed(3)),
+      learningGapCount:learningGaps.length,
+      knowledgePoints,
+      weakPoints,
+      learningGaps:learningGaps.map(x=>({
+        name:x.name,
+        questionCount:x.questionCount,
+        dueCount:x.dueCount,
+        severity:x.severity,
+        confidence:x.confidence
+      })),
+      activity:[...activityMap.entries()].sort().slice(-30).map(([date,count])=>({date,count})),
+      reviewTrend,
+      masteryTrend,
+      mistakeCauses,
+      difficulty,
+      reviewCompletionRate:reviewed+due?Number((reviewed/(reviewed+due)).toFixed(3)):0,
+      weeklyReport:{
+        added:qs.filter(x=>new Date(x.createdAt)>=seven).length,
+        reviews:weekly.length,
+        successfulReviews:weekly.filter(x=>x.quality>=3).length,
+        activeDays:active.size,
+        strongestKnowledgePoint:ordered[0]?.name,
+        weakestKnowledgePoint:knowledgePoints[0]?.name
+      }
+    }
   }
 
   graph():KnowledgeGraph{
