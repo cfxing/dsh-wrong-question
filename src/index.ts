@@ -132,14 +132,16 @@ export function apply(ctx:Context){
         : (updated.imagePath&&imported[0]?.path!==updated.imagePath
           ? [{kind:'image' as const,title:'原有题目图片',source:updated.imagePath}]
           : [])
+      const existingArtifacts=a.artifacts===undefined?updated.artifacts:[]
       const mergedArtifacts=[
+        ...existingArtifacts.filter(item=>item.kind!=='image'||item.source!==updated.imagePath),
         ...persistedArtifacts,
         ...importedImages,
         ...previousPrimaryImage
       ]
-      const persistedQuestion=mergedArtifacts.length>0||imported[0]
-        ? db.upsert({...updated,imagePath:imported[0]?.path??updated.imagePath,artifacts:mergedArtifacts})
-        : updated
+      if(a.artifacts!==undefined||mergedArtifacts.length>0||imported.length>0){
+        db.upsert({...updated,imagePath:imported[0]?.path??updated.imagePath,artifacts:mergedArtifacts})
+      }
       const structured=db.saveQuestionAnalysis({
         questionId:updated.id,
         solution:a.solution,
