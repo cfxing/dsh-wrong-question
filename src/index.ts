@@ -106,7 +106,7 @@ export function apply(ctx:Context){
       generated_by:{type:'string'},
       artifacts
     },
-    ['question_id'],async(a:any)=>{
+    ['question_id'],async(a:any,exec:any)=>{
       const q=db.getQuestion(a.question_id)
       if(!q)throw new Error('Question not found')
       const updated=db.upsert({
