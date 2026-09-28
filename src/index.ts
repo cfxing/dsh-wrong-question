@@ -50,7 +50,7 @@ export function apply(ctx:Context){
     })
   }
   register('add_question','Create a wrong-question record. When the current user turn contains durable image attachments and no explicit image_path/image_data is supplied, automatically copy those images into the wrong-question media directory and link them to the new record.',
-    {content:{type:'string'},answer:{type:'string'},knowledge_points:{type:'array',items:{type:'string'}},tags:{type:'array',items:{type:'string'}},difficulty:{type:'number'},mistake_cause:{type:'string'},analysis:{type:'string'},followup_question:{type:'string'},source:{type:'string'},image_path:{type:'string'},image_data:{type:'string',description:'Optional data:image/... base64 URL from the workspace.'},artifacts,ocr_text:{type:'string'}},
+    {content:{type:'string'},answer:{type:'string'},knowledge_points:{type:'array',items:{type:'string'}},tags:{type:'array',items:{type:'string'}},difficulty:{type:'number'},mistake_cause:{type:'string'},source:{type:'string'},image_path:{type:'string'},image_data:{type:'string',description:'Optional data:image/... base64 URL from the workspace.'},artifacts,ocr_text:{type:'string'}},
     ['content'],async(a:any,exec:any)=>{
       const id=crypto.randomUUID()
       const imported=!a.image_path&&!a.image_data
@@ -60,7 +60,7 @@ export function apply(ctx:Context){
       const extraArtifacts=imported.slice(1).map(image=>({kind:'image' as const,title:image.name,source:image.path}))
       return db.upsert({
         id,content:a.content,answer:a.answer,knowledgePoints:a.knowledge_points,tags:a.tags,difficulty:a.difficulty,
-        mistakeCause:a.mistake_cause,analysis:a.analysis,followupQuestion:a.followup_question,source:a.source,
+        mistakeCause:a.mistake_cause,source:a.source,
         imagePath:a.image_path??imported[0]?.path,
         imageData:a.image_data,artifacts:[...persistedArtifacts,...extraArtifacts],ocrText:a.ocr_text
       })
@@ -69,7 +69,7 @@ export function apply(ctx:Context){
     {question_id:{type:'string'}},['question_id'],
     async(a:any)=>{const detail=db.getQuestionDetail(a.question_id);if(!detail)throw new Error('Question not found');return detail})
   register('update_question','Update a wrong question.',
-    {question_id:{type:'string'},content:{type:'string'},answer:{type:'string'},knowledge_points:{type:'array',items:{type:'string'}},tags:{type:'array',items:{type:'string'}},difficulty:{type:'number'},mistake_cause:{type:'string'},analysis:{type:'string'},followup_question:{type:'string'},artifacts},
+    {question_id:{type:'string'},content:{type:'string'},answer:{type:'string'},knowledge_points:{type:'array',items:{type:'string'}},tags:{type:'array',items:{type:'string'}},difficulty:{type:'number'},mistake_cause:{type:'string'},artifacts},
     ['question_id'],async(a:any,exec:any)=>{const q=db.getQuestion(a.question_id);if(!q)throw new Error('Question not found');return db.upsert({id:q.id,content:a.content??q.content,answer:a.answer??q.answer,knowledgePoints:a.knowledge_points??q.knowledgePoints,tags:a.tags??q.tags,difficulty:a.difficulty??q.difficulty,mistakeCause:a.mistake_cause??q.mistakeCause,analysis:a.analysis??q.analysis,followupQuestion:a.followup_question??q.followupQuestion,artifacts:a.artifacts??q.artifacts})})
   register('analyze_question','Save structured Agent/Vision analysis for an existing wrong question. Use this after OCR/reasoning to record the solution, mistake diagnosis, learning gaps, reasoning gaps, correction strategy, and variant suggestions.',
     {
@@ -81,7 +81,6 @@ export function apply(ctx:Context){
       tags:{type:'array',items:{type:'string'}},
       difficulty:{type:'number'},
       mistake_cause:{type:'string'},
-      analysis:{type:'string',description:'Legacy free-form summary kept for backward compatibility.'},
       solution:{type:'string',description:'Correct solution/explanation.'},
       mistake_type:{type:'string',description:'Normalized mistake category, e.g. concept_gap, calculation, misread, method, reasoning, memory, careless, transfer.'},
       reasoning_error:{type:'string',description:'The reasoning step or misconception that caused the error.'},
@@ -105,7 +104,6 @@ export function apply(ctx:Context){
       variant_suggestions:{type:'array',items:{type:'string'}},
       confidence:{type:'number'},
       generated_by:{type:'string'},
-      followup_question:{type:'string'},
       artifacts
     },
     ['question_id'],async(a:any)=>{
@@ -120,8 +118,6 @@ export function apply(ctx:Context){
         tags:a.tags??q.tags,
         difficulty:a.difficulty??q.difficulty,
         mistakeCause:a.mistake_cause??q.mistakeCause,
-        analysis:a.analysis??q.analysis,
-        followupQuestion:a.followup_question??q.followupQuestion,
         artifacts:a.artifacts??q.artifacts
       })
       const imported=await persistCurrentTurnImages(exec,(ctx as any).attachments??(ctx as any).get?.('attachments'),wrongQuestionDir(),updated.id,currentTurnImages.refsFor(exec.agent?.session))
