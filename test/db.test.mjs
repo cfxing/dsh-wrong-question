@@ -19,6 +19,30 @@ test('stores image data and searches every text field',t=>{
   assert.equal(db.search('试卷第十二题')[0]?.question.id,q.id)
 })
 
+test('keeps question base row free of legacy analysis and follow-up columns',t=>{
+  const db=database(t)
+  const columns=db.db.prepare('PRAGMA table_info(questions)').all().map(x=>x.name)
+  assert.equal(columns.includes('analysis'),false)
+  assert.equal(columns.includes('followup_question'),false)
+})
+
+test('search and recall can use structured question analysis',t=>{
+  const db=database(t)
+  const q=db.upsert({content:'函数综合题'})
+  db.saveQuestionAnalysis({
+    questionId:q.id,
+    solution:'先利用一次函数斜率判断变化规律',
+    mistakeType:'concept_gap',
+    reasoningError:'把斜率与截距混淆',
+    knowledgeGaps:['斜率理解'],
+    reasoningGaps:['无法根据图像解释斜率'],
+    correctionStrategy:['比较不同直线的斜率'],
+    variantSuggestions:['改变斜率后比较图像']
+  })
+  assert.equal(db.search('斜率')[0]?.question.id,q.id)
+  assert.equal(db.recall('截距混淆')[0]?.question.id,q.id)
+})
+
 test('similarity combines knowledge points, tags and question text',t=>{
   const db=database(t)
   const a=db.upsert({content:'求一元二次方程的根',knowledgePoints:['一元二次方程'],tags:['代数']})
