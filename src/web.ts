@@ -84,6 +84,7 @@ export function registerWrongQuestionWeb(ctx:RuntimeContextLike,db:WrongQuestion
           return send(res,200,db.list({limit:Number(u.searchParams.get('limit')??100),offset:Number(u.searchParams.get('offset')??0),tag:u.searchParams.get('tag')??undefined,knowledgePoint:u.searchParams.get('knowledgePoint')??undefined,dueOnly:u.searchParams.get('dueOnly')==='1'}))
         }
         if(req.method==='POST'&&p==='/search'){const b=await body(req);return send(res,200,db.search(String(b.query??''),Math.min(50,Number(b.limit??20))))}
+        if(req.method==='GET'&&p==='/learning-gaps')return send(res,200,db.getLearningGaps(Math.min(100,Number(u.searchParams.get('limit')??20))))
         if(req.method==='POST'&&p==='/hybrid'){const b=await body(req);return send(res,200,await hybridSearch(db,hybrid.graph,hybrid.embedder,String(b.query??''),{topK:Math.min(50,Number(b.limit??20))}))}
         if(req.method==='POST'&&p==='/similar'){const b=await body(req);return send(res,200,db.findSimilar(String(b.questionId??''),Math.min(50,Number(b.limit??10))))}
         const media=p.match(/^\/questions\/([^/]+)\/media\/([^/]+)$/)
@@ -108,6 +109,26 @@ export function registerWrongQuestionWeb(ctx:RuntimeContextLike,db:WrongQuestion
           const type=mediaMime(abs,item.mime_type)
           if(!type)throw new Error('Unsupported media type')
           return streamMedia(res,req,abs,info.size,type)
+        }
+        const variants=p.match(/^\/questions\/([^/]+)\/variants$/)
+        if(variants&&req.method==='GET'){
+          const id=decodeURIComponent(variants[1]);if(!db.getQuestion(id))throw new Error('Question not found')
+          return send(res,200,db.listQuestionVariants(id,Math.min(100,Number(u.searchParams.get('limit')??20))))
+        }
+        if(variants&&req.method==='POST'){
+          const id=decodeURIComponent(variants[1]);if(!db.getQuestion(id))throw new Error('Question not found')
+          const b=await body(req)
+          return send(res,201,db.addQuestionVariant({questionId:id,variantType:String(b.variantType??'').trim(),content:String(b.content??'').trim(),answer:b.answer,analysis:b.analysis,difficulty:Number(b.difficulty??3),source:b.source,generatedBy:b.generatedBy}))
+        }
+        const attempts=p.match(/^\/questions\/([^/]+)\/attempts$/)
+        if(attempts&&req.method==='GET'){
+          const id=decodeURIComponent(attempts[1]);if(!db.getQuestion(id))throw new Error('Question not found')
+          return send(res,200,db.listQuestionAttempts(id,Math.min(100,Number(u.searchParams.get('limit')??20))))
+        }
+        if(attempts&&req.method==='POST'){
+          const id=decodeURIComponent(attempts[1])
+          const b=await body(req)
+          return send(res,201,db.recordQuestionAttempt({questionId:id,variantId:b.variantId,userAnswer:b.userAnswer,isCorrect:b.isCorrect,score:b.score,timeSpentMs:b.timeSpentMs,mistakeCause:b.mistakeCause,analysis:b.analysis}))
         }
         const m=p.match(/^\/questions\/([^/]+)$/)
         const image=p.match(/^\/questions\/([^/]+)\/image$/)
