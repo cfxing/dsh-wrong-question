@@ -22,6 +22,32 @@ function safeExtension(kind:QuestionArtifactInput['kind'],source?:string){
   return kind==='html'?'.html':kind==='video'?'.mp4':'.bin'
 }
 
+function isDocumentHtml(content:string){
+  return /<!doctype\b|<\s*(?:html|head|body)\b/iu.test(content)
+}
+
+function wrapHtmlFragment(fragment:string,title:string){
+  const escaped=title.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com blob: data:; style-src 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; img-src https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com blob: data:; media-src https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com blob: data:; connect-src blob: data:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>${escaped}</title>
+<style>
+html,body{margin:0;padding:0;background:transparent}
+body{padding:4px 2px;font-family:system-ui,sans-serif}
+</style>
+</head>
+<body>
+${fragment}
+</body>
+</html>
+`
+}
+
 function sourcePath(source:string,exec:any){
   if(!source||/^(?:https?:|data:|blob:|file:)/i.test(source))return null
   const cwd=exec?.agent?.session?.header?.cwd
@@ -83,7 +109,8 @@ export async function persistQuestionArtifacts(
         finalName=`${String(index+1).padStart(2,'0')}-${slug(artifact.title??'card')}-${seq++}.html`
       }
       usedNames.add(finalName)
-      await writeFile(join(mediaDir,finalName),content,{encoding:'utf8'})
+      const html= isDocumentHtml(content) ? content : wrapHtmlFragment(content,artifact.title??'学习卡片')
+      await writeFile(join(mediaDir,finalName),html,{encoding:'utf8'})
       source=join('media',questionId,finalName)
       content=undefined
     }else if(source){
