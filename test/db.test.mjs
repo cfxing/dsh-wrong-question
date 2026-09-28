@@ -64,6 +64,20 @@ test('stores structured analysis and aggregates learning gaps',t=>{
   assert.equal(db.getQuestionAnalysis(q.id)?.reasoningGaps[0],'不会从变形结果反推图像性质')
 })
 
+test('links a persisted image file as question media without storing bytes in SQLite',t=>{
+  const db=database(t)
+  const q=db.upsert({content:'图片错题'})
+  const media=db.addQuestionImage({
+    questionId:q.id,
+    source:'media/'+q.id+'/abc.png',
+    mimeType:'image/png',
+    title:'题目原图'
+  })
+  assert.equal(media.kind,'image')
+  assert.equal(db.getQuestion(q.id)?.imagePath,'media/'+q.id+'/abc.png')
+  assert.equal(db.getMedia(q.id,media.id)?.mime_type,'image/png')
+})
+
 test('stores generated variants and real attempts independently from review logs',t=>{
   const db=database(t)
   const q=db.upsert({content:'一元二次方程求根'})
