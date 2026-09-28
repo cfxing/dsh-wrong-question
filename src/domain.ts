@@ -79,6 +79,7 @@ export interface QuestionVariant {
 export interface QuestionAttempt {
   id: string
   questionId: string
+  variantId?: string
   userAnswer?: string
   isCorrect?: boolean
   score?: number
