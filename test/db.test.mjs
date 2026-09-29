@@ -88,6 +88,24 @@ test('stores structured analysis and aggregates learning gaps',t=>{
   assert.equal(db.getQuestionAnalysis(q.id)?.reasoningGaps[0],'不会从变形结果反推图像性质')
 })
 
+test('deduplicates the primary image when the same file is also passed as an image artifact',t=>{
+  const db=database(t)
+  const q=db.upsert({
+    content:'平面镜成像作图',
+    imagePath:'media/q1/original.png',
+    artifacts:[
+      {kind:'image',title:'原图重复',source:'media/q1/original.png'},
+      {kind:'image',title:'解题图示',source:'media/q1/solution.png'}
+    ]
+  })
+  const media=db.db.prepare('SELECT kind,source,title FROM question_media WHERE question_id=? ORDER BY sort_order').all(q.id)
+  assert.equal(media.length,2)
+  assert.equal(media.some(x=>x.source==='media/q1/original.png'&&x.kind==='image'),true)
+  assert.equal(media.filter(x=>x.source==='media/q1/original.png').length,1)
+  assert.equal(db.getQuestion(q.id)?.artifacts.length,1)
+  assert.equal(db.getQuestion(q.id)?.artifacts[0]?.source,'media/q1/solution.png')
+})
+
 test('links a persisted image file as question media without storing bytes in SQLite',t=>{
   const db=database(t)
   const q=db.upsert({content:'图片错题'})
