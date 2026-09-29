@@ -120,7 +120,7 @@ export function apply(ctx:Context){
         mistakeCause:a.mistake_cause??q.mistakeCause,
         artifacts:a.artifacts??q.artifacts
       })
-      const imported=await persistCurrentTurnImages(exec,(ctx as any).attachments??(ctx as any).get?.('attachments'),wrongQuestionDir(),updated.id,currentTurnImages.refsFor(exec.agent?.session))
+      const imported=await persistCurrentTurnImages(exec,(ctx as any).get?.attachments??(ctx as any).get?.('attachments'),wrongQuestionDir(),updated.id,currentTurnImages.refsFor(exec.agent?.session))
       const persistedArtifacts=await persistQuestionArtifacts(exec,a.artifacts??[],wrongQuestionDir(),updated.id)
       const importedImages=imported.slice(1).map(image=>({kind:'image' as const,title:image.name,source:image.path}))
       const previousPrimaryImage=imported.length===0&&updated.imagePath
