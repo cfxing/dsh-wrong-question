@@ -566,7 +566,7 @@ export class WrongQuestionDb {
       .sort((a,b)=>b.score-a.score)
       .slice(0,Math.min(50,Math.max(1,limit)))
   }
-
+  //废弃，目前使用hybridSearch进行召回
   recall(query:string,limit=5):SearchHit[]{
     const exact=this.search(query,limit),found=new Map(exact.map(x=>[x.question.id,x])),qt=terms(query)
     const rows=this.db.prepare('SELECT question_id,solution,mistake_type,reasoning_error,knowledge_gaps,reasoning_gaps,correction_strategy,variant_suggestions FROM question_analyses').all() as any[]
