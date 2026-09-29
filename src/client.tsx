@@ -297,7 +297,11 @@ function readImage(file:File){return new Promise<string>((resolve,reject)=>{cons
 function mediaUrl(value:unknown,kind:'image'|'video'|'html',questionId?:string,mediaId?:string){
   if(typeof value!=='string'||!value.trim())return undefined
   const url=value.trim()
-  if(url.startsWith('/')&&questionId&&mediaId)return `${API}/questions/${encodeURIComponent(questionId)}/media/${encodeURIComponent(mediaId)}`
+  // Plugin-owned media paths are relative to ~/.dsh/wrong-question, so they must
+  // go through the question-media HTTP endpoint. Do not require a leading slash.
+  if(questionId&&mediaId&&!/^https?:\/\//i.test(url)&&!/^data:/i.test(url)) {
+    return `${API}/questions/${encodeURIComponent(questionId)}/media/${encodeURIComponent(mediaId)}`
+  }
   if(url.startsWith('/')||/^https?:\/\//i.test(url))return url
   if(kind==='image'&&/^data:image\/(png|jpeg|webp|gif);base64,/i.test(url))return url
   if(kind==='video'&&/^data:video\/(mp4|webm|ogg);base64,/i.test(url))return url
