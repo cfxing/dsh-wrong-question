@@ -14,7 +14,7 @@ import { OllamaEmbedder, type Embedder } from './embedding.js'
 import { hybridSearch } from './hybrid.js'
 
 export const name='wrong-question'
-export const inject=['tools','attachments']
+export const inject=['tools']
 
 function wrongQuestionDir(){const home=process.env.DSH_HOME||join(homedir(),'.dsh');const dir=join(home,'wrong-question');mkdirSync(dir,{recursive:true});return dir}
 function dbPath(){return join(wrongQuestionDir(),'wrong-questions.sqlite')}
@@ -54,7 +54,7 @@ export function apply(ctx:Context){
     ['content'],async(a:any,exec:any)=>{
       const id=crypto.randomUUID()
       const imported=!a.image_path&&!a.image_data
-        ? await persistCurrentTurnImages(exec,(ctx as any).attachments??(ctx as any).get?.('attachments'),wrongQuestionDir(),id,currentTurnImages.refsFor(exec.agent?.session))
+        ? await persistCurrentTurnImages(exec,(ctx as any).get?.('attachments'),wrongQuestionDir(),id,currentTurnImages.refsFor(exec.agent?.session))
         : []
       const persistedArtifacts=await persistQuestionArtifacts(exec,a.artifacts??[],wrongQuestionDir(),id)
       const extraArtifacts=imported.slice(1).map(image=>({kind:'image' as const,title:image.name,source:image.path}))
