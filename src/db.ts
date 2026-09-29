@@ -10,9 +10,18 @@ function parseArray(value: unknown): string[] {
 
 function parseQuestion(row: any): Question {
   const media = Array.isArray(row.__media) ? row.__media : []
-  const artifacts: QuestionArtifact[] = media.filter((m:any) => ['image','video','html'].includes(m.kind))
-    .map((m:any) => ({id:m.id,kind:m.kind,title:m.title ?? undefined,source:m.source ?? undefined,content:m.content ?? undefined,poster:m.poster ?? undefined}))
   const image = media.find((m:any) => m.kind === 'image')
+  const primaryImageSource = image?.source ?? undefined
+  const seenArtifacts = new Set<string>()
+  const artifacts: QuestionArtifact[] = media.filter((m:any) => ['image','video','html'].includes(m.kind))
+    .filter((m:any) => {
+      if (m.kind === 'image' && primaryImageSource && m.source === primaryImageSource) return false
+      const key = [m.kind, m.source ?? '', m.content ?? '', m.poster ?? ''].join('\\0')
+      if (seenArtifacts.has(key)) return false
+      seenArtifacts.add(key)
+      return true
+    })
+    .map((m:any) => ({id:m.id,kind:m.kind,title:m.title ?? undefined,source:m.source ?? undefined,content:m.content ?? undefined,poster:m.poster ?? undefined}))
   return {
     id:row.id, content:row.content, answer:row.answer ?? '', source:row.source ?? undefined,
     imagePath:image?.source ?? undefined, imageData:image?.content?.startsWith('data:image/') ? image.content : undefined, imageMediaId:image?.id ?? undefined,
@@ -483,6 +492,11 @@ export class WrongQuestionDb {
       if(path)this.db.prepare('INSERT INTO question_media(id,question_id,kind,source,sort_order,created_at) VALUES(?,?,?,?,?,?)').run(crypto.randomUUID(),id,'image',path,order++,now)
       if(data)this.db.prepare('INSERT INTO question_media(id,question_id,kind,content,mime_type,sort_order,created_at) VALUES(?,?,?,?,?,?,?)').run(crypto.randomUUID(),id,'image',data,data.match(/^data:(image\/[^;]+);/i)?.[1] ?? null,order++,now)
       for(const a of input.artifacts??old?.artifacts??[])this.db.prepare('INSERT INTO question_media(id,question_id,kind,title,source,content,poster,sort_order,created_at) VALUES(?,?,?,?,?,?,?,?,?)').run(crypto.randomUUID(),id,a.kind,a.title??null,a.source??null,a.content??null,a.poster??null,order++,now)
+      // Do not keep the same media twice (for example the current-turn primary image also passed as an image artifact).
+      this.db.prepare(`DELETE FROM question_media WHERE question_id=? AND id NOT IN (
+        SELECT MIN(id) FROM question_media WHERE question_id=?
+        GROUP BY kind, COALESCE(source,''), COALESCE(content,''), COALESCE(poster,'')
+      )`).run(id,id)
       this.db.prepare('DELETE FROM question_knowledge_points WHERE question_id=?').run(id)
       for(const name of [...new Set((input.knowledgePoints??old?.knowledgePoints??[]).map(String).map(x=>x.trim()).filter(Boolean))])this.db.prepare('INSERT INTO question_knowledge_points(question_id,knowledge_point_id,importance) VALUES(?,?,?)').run(id,this.ensure('knowledge_points',name,now),1)
       this.db.prepare('DELETE FROM question_tags WHERE question_id=?').run(id)
