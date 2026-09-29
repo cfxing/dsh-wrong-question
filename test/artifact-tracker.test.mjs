@@ -10,22 +10,23 @@ test('captures OpenMAIC render and widget visuals from the current turn',()=>{
   const emit=(event)=>listeners.forEach(fn=>fn(session,event))
 
   emit({type:'turn/start',data:{turn:1}})
-  emit({
-    type:'tool/result',
-    seq:2,
-    data:{
-      message:{source:{callId:'render-1'}},
-      meta:{kind:'openmaic-render',title:'平面镜成像',fragment:'<svg>solution</svg>'}
+  const resultListeners=[]
+  const toolTracker=createCurrentTurnTeachingArtifactTracker({
+    on:(name,fn)=>{
+      if(name==='session/event')listeners.push(fn)
+      else if(name==='tools/result')resultListeners.push(fn)
     }
   })
-  emit({
-    type:'tool/result',
-    seq:3,
-    data:{
-      message:{source:{callId:'widget-1'}},
-      meta:{kind:'openmaic-widget',title:'受力互动',html:'<!doctype html><html><body>widget</body></html>'}
-    }
-  })
+  const toolResult=(exec,result)=>resultListeners.forEach(fn=>fn(exec,result))
+
+  toolResult(
+    {name:'openmaic_render',callId:'render-1',agent:{session}},
+    {meta:{kind:'openmaic-render',title:'平面镜成像',fragment:'<svg>solution</svg>'}}
+  )
+  toolResult(
+    {name:'openmaic_widget',callId:'widget-1',agent:{session}},
+    {meta:{kind:'openmaic-widget',title:'受力互动',html:'<!doctype html><html><body>widget</body></html>'}}
+  )
 
   const artifacts=tracker.artifactsFor(session)
   assert.equal(artifacts.length,2)
