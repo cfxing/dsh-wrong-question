@@ -77,7 +77,7 @@ export class KnowledgeGraph {
   }
 
   async findKnowledgePoints(query:string,topK=20):Promise<string[]>{
-    const terms=query.normalize('NFKC').toLocaleLowerCase().match(/[\\p{L}\\p{N}]+/gu)??[]
+    const terms=query.normalize('NFKC').toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu)??[]
     const rows=await this.q('MATCH (k:KnowledgePoint) RETURN k.name AS name').catch(()=>[])
     const scored=(rows as Record<string,unknown>[]).map(r=>{const name=String(r.name),low=name.toLocaleLowerCase();let score=0;for(const t of terms)if(low.includes(t)||t.includes(low))score+=1;return{name,score}}).filter(x=>x.score>0).sort((a,b)=>b.score-a.score)
     return scored.slice(0,topK).map(x=>x.name)
