@@ -3,6 +3,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { mkdirSync } from 'node:fs'
 import { createCurrentTurnImageTracker, persistCurrentTurnImages } from './image-import.js'
+import { createCurrentTurnTeachingArtifactTracker } from './artifact-tracker.js'
 import { persistQuestionArtifacts } from './media-import.js'
 import { WrongQuestionDb } from './db.js'
 import type { GraphSyncHook } from './db.js'
@@ -29,6 +30,7 @@ export function apply(ctx:Context){
   }
   const db=new WrongQuestionDb(dbPath(), graphSync)
   const currentTurnImages=createCurrentTurnImageTracker(ctx)
+  const currentTurnTeachingArtifacts=createCurrentTurnTeachingArtifactTracker(ctx)
   const webRuntime={graph:null as KnowledgeGraph|null,embedder}
   void initGraph(db, embedder).then((g) => { graph = g; webRuntime.graph = g })
   ctx.effect(()=>()=>db.close(),'dsh-wrong-question: sqlite')
@@ -56,7 +58,8 @@ export function apply(ctx:Context){
       const imported=!a.image_path&&!a.image_data
         ? await persistCurrentTurnImages(exec,(ctx as any).get?.('attachments'),wrongQuestionDir(),id,currentTurnImages.refsFor(exec.agent?.session))
         : []
-      const persistedArtifacts=await persistQuestionArtifacts(exec,a.artifacts??[],wrongQuestionDir(),id)
+      const capturedTeachingArtifacts=currentTurnTeachingArtifacts.artifactsFor(exec.agent?.session)
+      const persistedArtifacts=await persistQuestionArtifacts(exec,[...(a.artifacts??[]),...capturedTeachingArtifacts],wrongQuestionDir(),id)
       const extraArtifacts=imported.slice(1).map(image=>({kind:'image' as const,title:image.name,source:image.path}))
       return db.upsert({
         id,content:a.content,answer:a.answer,knowledgePoints:a.knowledge_points,tags:a.tags,difficulty:a.difficulty,
@@ -120,8 +123,9 @@ export function apply(ctx:Context){
         mistakeCause:a.mistake_cause??q.mistakeCause,
         artifacts:a.artifacts??q.artifacts
       })
-      const imported=await persistCurrentTurnImages(exec,(ctx as any).get?.attachments??(ctx as any).get?.('attachments'),wrongQuestionDir(),updated.id,currentTurnImages.refsFor(exec.agent?.session))
-      const persistedArtifacts=await persistQuestionArtifacts(exec,a.artifacts??[],wrongQuestionDir(),updated.id)
+      const imported=await persistCurrentTurnImages(exec,(ctx as any).get?.('attachments'),wrongQuestionDir(),updated.id,currentTurnImages.refsFor(exec.agent?.session))
+      const capturedTeachingArtifacts=currentTurnTeachingArtifacts.artifactsFor(exec.agent?.session)
+      const persistedArtifacts=await persistQuestionArtifacts(exec,[...(a.artifacts??[]),...capturedTeachingArtifacts],wrongQuestionDir(),updated.id)
       const importedImages=imported.slice(1).map(image=>({kind:'image' as const,title:image.name,source:image.path}))
       const previousPrimaryImage=imported.length===0&&updated.imagePath
         ? []
