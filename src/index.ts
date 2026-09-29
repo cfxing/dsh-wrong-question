@@ -33,7 +33,8 @@ export function apply(ctx:Context){
   const currentTurnTeachingArtifacts=createCurrentTurnTeachingArtifactTracker(ctx)
   const webRuntime={graph:null as KnowledgeGraph|null,embedder}
   void initGraph(db, embedder).then((g) => { graph = g; webRuntime.graph = g })
-  ctx.effect(()=>()=>db.close(),'dsh-wrong-question: sqlite')
+  // 卸载/重载时释放 SQLite 与 Kuzu 句柄；若不关 Kuzu，宿主反复加载插件会让旧实例持续占用 knowledge.kuzu 锁。
+  ctx.effect(()=>()=>{db.close();graph?.close?.().catch?.(()=>{})},'dsh-wrong-question: sqlite and graph')
   // Browser workspace and server API share the same SQLite connection.
   const runtime=ctx as any
   if(runtime.inject)runtime.inject(['webServer'],(http:any)=>registerWrongQuestionWeb(http,db,webRuntime))
