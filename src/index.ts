@@ -169,9 +169,24 @@ export function apply(ctx:Context){
   register('find_similar_questions','Find lexical/knowledge-point similar questions.',
     {question_id:{type:'string'},limit:{type:'integer'}},['question_id'],
     async(a:any)=>db.findSimilar(a.question_id,Math.min(50,a.limit??10)))
-  register('recall_wrong_questions','Use before answering a new academic question to recall related past mistakes and adapt the explanation. Pass the user question as query.',
+  register('recall_wrong_questions','Use before answering a new academic question to recall the learner\'s related past mistakes. This is the primary personalized-memory entry point: it uses hybrid retrieval (SQLite FTS + semantic vector + Kuzu knowledge graph) fused with RRF, then returns each recalled question with its structured analysis and learning gaps. Pass the new user question as query.',
     {query:{type:'string'},limit:{type:'integer'}},['query'],
-    async(a:any)=>db.recall(a.query,Math.min(10,a.limit??5)))
+    async(a:any)=>{
+      const limit=Math.min(10,Math.max(1,a.limit??5))
+      const hits=await hybridSearch(db,graph,embedder,a.query,{topK:limit})
+      const results=hits.map(hit=>{
+        const detail=db.getQuestionDetail(hit.question.id)
+        return {
+          ...hit,
+          analysis:detail?.analysis??null,
+          learningGaps:detail?.learningGaps??[]
+        }
+      })
+      return {
+        results,
+        learningGaps:db.getLearningGaps(20)
+      }
+    })
   register('add_question_variant','Create a targeted variant of an existing wrong question. Use after analysis to generate same-level, number-change, condition-change, reverse, reasoning, or transfer practice.',
     {
       question_id:{type:'string'},
