@@ -6,56 +6,70 @@ export interface CurrentTurnTeachingArtifact extends QuestionArtifact {
 }
 
 interface State {
-  turn: number
   artifacts: Map<string, CurrentTurnTeachingArtifact>
 }
 
 /**
- * Capture OpenMAIC visual results produced during the current turn.
+ * Capture OpenMAIC visual results from the authoritative tool-result boundary.
  *
- * dsh-openmaic persists its authored visual in tool/result meta:
- * - openmaic_render -> meta.fragment
- * - openmaic_widget -> meta.html
+ * dsh-openmaic attaches the replayable teaching content to ToolResult.meta:
+ * - openmaic_render -> { kind: 'openmaic-render', fragment, title }
+ * - openmaic_widget -> { kind: 'openmaic-widget', html, title }
  *
- * We retain the authored HTML instead of replacing it with a prose summary.
- * This makes the visual card available to the wrong-question media gallery.
+ * This is more reliable than reading session/event because tools/result is the
+ * canonical post-normalization observation point of the tool runtime.
  */
 export function createCurrentTurnTeachingArtifactTracker(ctx: any) {
   const states = new WeakMap<object, State>()
 
-  ctx.on('session/event', (session: any, event: any) => {
-    if (!session || !event) return
-    if (event.type === 'turn/start') {
-      states.set(session, { turn: Number(event.data?.turn ?? 0), artifacts: new Map() })
-      return
+  ctx.on('turn/start', (event: any) => {
+    const session = event?.session ?? event?.data?.session
+    if (session && typeof session === 'object') {
+      states.set(session, { artifacts: new Map() })
     }
-    if (event.type !== 'tool/result') return
+  })
 
-    const state = states.get(session)
-    if (!state) return
+  ctx.on('tools/result', (exec: any, result: any) => {
+    const name = String(exec?.name ?? '')
+    if (name !== 'openmaic_render' && name !== 'openmaic_widget') return
 
-    const meta = event.data?.meta
+    const session = exec?.agent?.session
+    if (!session || typeof session !== 'object') return
+
+    const meta = result?.meta
     if (!meta || typeof meta !== 'object') return
 
     let artifact: CurrentTurnTeachingArtifact | undefined
-    if (meta.kind === 'openmaic-render' && typeof meta.fragment === 'string' && meta.fragment.trim()) {
+
+    if (meta.kind === 'openmaic-render'
+      && typeof meta.fragment === 'string'
+      && meta.fragment.trim()) {
       artifact = {
         kind: 'html',
-        title: typeof meta.title === 'string' && meta.title.trim() ? '解题图示 · ' + meta.title.trim() : '解题图示',
+        title: typeof meta.title === 'string' && meta.title.trim()
+          ? '解题图示 · ' + meta.title.trim()
+          : '解题图示',
         content: meta.fragment,
       }
-    } else if (meta.kind === 'openmaic-widget' && typeof meta.html === 'string' && meta.html.trim()) {
+    } else if (meta.kind === 'openmaic-widget'
+      && typeof meta.html === 'string'
+      && meta.html.trim()) {
       artifact = {
         kind: 'html',
-        title: typeof meta.title === 'string' && meta.title.trim() ? '解题互动 · ' + meta.title.trim() : '解题互动',
+        title: typeof meta.title === 'string' && meta.title.trim()
+          ? '解题互动 · ' + meta.title.trim()
+          : '解题互动',
         content: meta.html,
       }
     }
 
     if (!artifact) return
-    const callId = String(event.data?.message?.source?.callId ?? event.seq ?? (artifact.kind + ':' + artifact.title))
+
+    const state = states.get(session) ?? { artifacts: new Map() }
+    const callId = String(exec?.callId ?? exec?.token ?? artifact.title)
     state.artifacts.set(callId, artifact)
-  }, { global: true })
+    states.set(session, state)
+  })
 
   return {
     artifactsFor(session: any): CurrentTurnTeachingArtifact[] {
