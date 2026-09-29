@@ -154,7 +154,9 @@ export function apply(ctx:Context){
         confidence:a.confidence,
         generatedBy:a.generated_by
       })
-      return {question:updated,analysis:structured,learningGaps:db.getLearningGaps(20)}
+      const detail=db.getQuestionDetail(updated.id)
+      if(!detail)throw new Error('Question not found after analysis')
+      return {question:detail,analysis:structured,learningGaps:db.getLearningGaps(20)}
     })
   register('delete_question','Delete a wrong question.',
     {question_id:{type:'string'}},['question_id'],async(a:any)=>({deleted:db.delete(a.question_id)}))
