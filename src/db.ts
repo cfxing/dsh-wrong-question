@@ -730,7 +730,7 @@ export class WrongQuestionDb {
   }
 }
 
-function searchTokens(value:string){return value.normalize('NFKC').match(/[\\p{L}\\p{N}]+/gu)?.slice(0,20)??[]}
-function terms(value:string){const chunks=String(value??'').normalize('NFKC').toLocaleLowerCase().match(/[a-z0-9]+|[\\p{Script=Han}]+/gu)??[],out:string[]=[];for(const c of chunks){if(!/^[\\p{Script=Han}]+$/u.test(c)||c.length===1)out.push(c);else for(let i=0;i<c.length-1;i++)out.push(c.slice(i,i+2))}return[...new Set(out)]}
+function searchTokens(value:string){return value.normalize('NFKC').match(/[\p{L}\p{N}]+/gu)?.slice(0,20)??[]}
+function terms(value:string){const chunks=String(value??'').normalize('NFKC').toLocaleLowerCase().match(/[a-z0-9]+|[\p{Script=Han}]+/gu)??[],out:string[]=[];for(const c of chunks){if(!/^[\p{Script=Han}]+$/u.test(c)||c.length===1)out.push(c);else for(let i=0;i<c.length-1;i++)out.push(c.slice(i,i+2))}return[...new Set(out)]}
 function jaccard(a:string[],b:string[]){const x=new Set(a.map(v=>v.trim().toLocaleLowerCase()).filter(Boolean)),y=new Set(b.map(v=>v.trim().toLocaleLowerCase()).filter(Boolean));if(!x.size&&!y.size)return 0;let n=0;for(const v of x)if(y.has(v))n++;return n/(x.size+y.size-n)}
 function lastDays(count:number,now:Date){const out:string[]=[];for(let i=count-1;i>=0;i--){const d=new Date(now);d.setHours(0,0,0,0);d.setDate(d.getDate()-i);out.push(d.toISOString().slice(0,10))}return out}

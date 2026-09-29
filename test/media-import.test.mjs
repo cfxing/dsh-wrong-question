@@ -25,7 +25,7 @@ test('persists video and html artifacts together for one question',async()=>{
     assert.equal(readFileSync(join(targetRoot,artifacts[0].source),'utf8'),'VIDEO')
     assert.equal(artifacts[1].kind,'html')
     assert.match(artifacts[1].source??'',/^media\/q1\/02-/)
-    assert.match(readFileSync(join(targetRoot,artifacts[1].source??''),'utf8'),'interactive')
+    assert.equal(readFileSync(join(targetRoot,artifacts[1].source??''),'utf8'),'<html><body>card</body></html>')
   }finally{
     rmSync(sourceRoot,{recursive:true,force:true})
     rmSync(targetRoot,{recursive:true,force:true})

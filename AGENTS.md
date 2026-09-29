@@ -54,4 +54,6 @@
 - **Kuzu embedding 列用 `FLOAT[N]`，查询向量须 `CAST([...], 'FLOAT[N]')`**，否则报 `requires argument type to be FLOAT[]`；`ARRAY_COSINE_SIMILARITY` 返回相似度（越近越大），与下游 `1 - sim` 转换
 - **Kuzu 表必须有主键**（`id STRING PRIMARY KEY`），否则建表报 `Can not find primary key`
 - **Kuzu 进程退出可能 segfault（原生析构）**：运行时逻辑正常；如需干净退出用 `process.exit(0)` 或由宿主常驻回收
-- **index.ts 里 `graph` 必须在独立函数中初始化**（如 `initGraph`），不能直接在 `apply` 内 Async IIFE 中 `graph = new KnowledgeGraph(...)` —— 会触发 TS 作用域类型收窄，导致 `WrongQuestionDb` 被误判"无构造签名"
+- **中文检索的 Unicode 属性正则必须用单反斜杠 `\p{L}`/`\p{Script=Han}`**：若写成双反斜杠 `\\p`，正则里会匹配"字面反斜杠+p"这些 ASCII 字符，导致中文分词恒为空、检索静默返回空。全库出现过的位置：`db.ts` 的 `searchTokens()`（FTS 词法路）与 `terms()`（recall 汉字 bigram）、`knowledge-graph.ts` 的 `findKnowledgePoints()`（图路 seed），以及 `embedding.ts` `localVector()`。已修复并保持与 `embedding.ts` 一致写法
+- **`db.search` 的 FTS 与 scrapy 兜底**：`searchTokens` 空则直接返回 `[]`；对中文多词 query，FTS5（unicode61 按空格/token）多命中弱、整串 `LIKE '%…%'` 兜底几乎不命中——中文语义召回主要靠 `recall`/hybrid 的图路与向量路
+- **Kuzu graph 为 `null` 时 hybrid 只剩 FTS 一路**：`hybridSearch` 在 `graph===null` 时跳过向量/图遍历，常见原因是用 `pnpm pack` 打包时 Kuzu 原生绑定二进制未随插件发出、宿主 `require('kuzu')` 失败 → `initGraph` catch 返回 null。已让 `initGraph` 失败时 `console.warn` 输出原因，便于定位

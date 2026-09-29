@@ -281,7 +281,8 @@ export async function initGraph(db: WrongQuestionDb, embedder: Embedder): Promis
     await graph.ready
     await graph.rebuild(db.all())
     return graph
-  } catch {
+  } catch (err) {
+    console.warn('[wrong-question] Kuzu knowledge-graph init failed; hybrid falls back to SQLite-FTS only:', err)
     return null
   }
 }
