@@ -16,18 +16,19 @@ interface State {
  * - openmaic_render -> { kind: 'openmaic-render', fragment, title }
  * - openmaic_widget -> { kind: 'openmaic-widget', html, title }
  *
- * This is more reliable than reading session/event because tools/result is the
- * canonical post-normalization observation point of the tool runtime.
+ * We use session/event only for the turn boundary. The actual OpenMAIC capture
+ * happens on tools/result, where the normalized immutable ToolResult is already
+ * available with its presentation metadata.
  */
 export function createCurrentTurnTeachingArtifactTracker(ctx: any) {
   const states = new WeakMap<object, State>()
 
-  ctx.on('turn/start', (event: any) => {
-    const session = event?.session ?? event?.data?.session
-    if (session && typeof session === 'object') {
+  ctx.on('session/event', (session: any, event: any) => {
+    if (!session || !event) return
+    if (event.type === 'turn/start') {
       states.set(session, { artifacts: new Map() })
     }
-  })
+  }, { global: true })
 
   ctx.on('tools/result', (exec: any, result: any) => {
     const name = String(exec?.name ?? '')
