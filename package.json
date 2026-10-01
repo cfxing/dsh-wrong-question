@@ -20,6 +20,7 @@
     "lib/**/*.d.ts",
     "lib/**/*.css",
     "web/**/*",
+    "skills/**/*",
     "cordis.patch.yml",
     "README.md",
     "LICENSE"
