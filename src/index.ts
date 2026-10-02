@@ -13,27 +13,54 @@ import { registerWrongQuestionWeb } from './web.js'
 import { KnowledgeGraph } from './knowledge-graph.js'
 import { OllamaEmbedder, type Embedder } from './embedding.js'
 import { hybridSearch } from './hybrid.js'
+import { registerWrongQuestionSkills } from './skills.js'
 
 export const name='wrong-question'
-export const inject=['tools']
+export const inject=['tools','skills']
 
 function wrongQuestionDir(){const home=process.env.DSH_HOME||join(homedir(),'.dsh');const dir=join(home,'wrong-question');mkdirSync(dir,{recursive:true});return dir}
 function dbPath(){return join(wrongQuestionDir(),'wrong-questions.sqlite')}
 
 export function apply(ctx:Context){
+  registerWrongQuestionSkills(ctx)
   const embedder = new OllamaEmbedder()
   let graph: KnowledgeGraph | null = null
+  let disposed = false
   const graphSync: GraphSyncHook = {
-    upsert: (q) => { if (graph) return graph.upsertQuestion(q) },
-    delete: (id) => { if (graph) return graph.deleteQuestion(id) },
-    close: () => { if (graph) return graph.close() },
+    upsert: (q) => { if (!disposed && graph) return graph.upsertQuestion(q) },
+    delete: (id) => { if (!disposed && graph) return graph.deleteQuestion(id) },
+    close: () => {
+      const current = graph
+      graph = null
+      if (webRuntime.graph === current) webRuntime.graph = null
+      return current?.close()
+    },
   }
   const db=new WrongQuestionDb(dbPath(), graphSync)
   const currentTurnImages=createCurrentTurnImageTracker(ctx)
   const currentTurnTeachingArtifacts=createCurrentTurnTeachingArtifactTracker(ctx)
   const webRuntime={graph:null as KnowledgeGraph|null,embedder}
-  void initGraph(db, embedder).then((g) => { graph = g; webRuntime.graph = g })
-  ctx.effect(()=>()=>db.close(),'dsh-wrong-question: sqlite')
+  // Snapshot SQLite before entering any async Kuzu initialization. This avoids
+  // racing the plugin lifecycle: db.close() may run while graph.ready is pending.
+  const questionsAtStartup = db.all()
+  void initGraph(questionsAtStartup, embedder).then((g) => {
+    if (disposed) {
+      void g?.close()
+      return
+    }
+    graph = g
+    webRuntime.graph = g
+  })
+  ctx.effect(()=>()=>{
+    disposed = true
+    const current = graph
+    graph = null
+    webRuntime.graph = null
+    // db.close() also invokes graphSync.close(); graph has already been detached
+    // above, so the async initializer cannot double-close the active graph.
+    db.close()
+    void current?.close()
+  },'dsh-wrong-question: sqlite')
   // Browser workspace and server API share the same SQLite connection.
   const runtime=ctx as any
   if(runtime.inject)runtime.inject(['webServer'],(http:any)=>registerWrongQuestionWeb(http,db,webRuntime))
@@ -272,17 +299,19 @@ function toToolJson(value:unknown):string{
 }
 
 /** 初始化 Kuzu 图存储并做全量投影；失败（如原生绑定缺失/库不可用）返回 null，系统降级为纯 SQLite。 */
-export async function initGraph(db: WrongQuestionDb, embedder: Embedder): Promise<KnowledgeGraph | null> {
+export async function initGraph(questions: import('./domain.js').Question[], embedder: Embedder): Promise<KnowledgeGraph | null> {
+  let graph: KnowledgeGraph | null = null
   try {
     const home = process.env.DSH_HOME || join(homedir(), '.dsh')
     const dir = join(home, 'wrong-question')
     mkdirSync(dir, { recursive: true })
-    const graph = new KnowledgeGraph({ path: join(dir, 'knowledge.kuzu'), embedder })
+    graph = new KnowledgeGraph({ path: join(dir, 'knowledge.kuzu'), embedder })
     await graph.ready
-    await graph.rebuild(db.all())
+    await graph.rebuild(questions)
     return graph
   } catch (err) {
     console.warn('[wrong-question] Kuzu knowledge-graph init failed; hybrid falls back to SQLite-FTS only:', err)
+    if (graph) await graph.close().catch(() => {})
     return null
   }
 }

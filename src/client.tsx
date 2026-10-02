@@ -2,6 +2,7 @@ import React,{useEffect,useMemo,useState} from 'react'
 import type { Context } from '@deepseek-ai/cordis'
 import { registerMainPanel } from './main-panel-compat.js'
 import clientCss from './client.css'
+import { registerTeachingActions } from './teacher-actions.js'
 
 const PLUGIN_ID='dsh-wrong-question'
 const API='/wrong-question-control/v1'
@@ -13,6 +14,7 @@ export const inject=['slots','layout']
 
 export function apply(ctx:Context){
   installStyles()
+  registerTeachingActions(ctx)
   const ui=ctx as any
   let dispose:(()=>void)|undefined
   const open=()=>{dispose?.();dispose=registerMainPanel(ctx,PLUGIN_ID,-1,()=> <WrongQuestionWorkspace close={()=>{dispose?.();dispose=undefined}} />)}
