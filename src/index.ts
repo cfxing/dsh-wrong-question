@@ -16,13 +16,15 @@ import { hybridSearch } from './hybrid.js'
 import { registerWrongQuestionSkills } from './skills.js'
 
 export const name='wrong-question'
-export const inject=['tools','skills']
+export const inject=['tools']
 
 function wrongQuestionDir(){const home=process.env.DSH_HOME||join(homedir(),'.dsh');const dir=join(home,'wrong-question');mkdirSync(dir,{recursive:true});return dir}
 function dbPath(){return join(wrongQuestionDir(),'wrong-questions.sqlite')}
 
 export function apply(ctx:Context){
-  registerWrongQuestionSkills(ctx)
+  if (typeof (ctx as any).skills?.register === 'function') {
+    try { registerWrongQuestionSkills(ctx) } catch (err) { console.warn('[wrong-question] skill registration skipped:', err instanceof Error ? err.message : err) }
+  }
   const embedder = new OllamaEmbedder()
   let graph: KnowledgeGraph | null = null
   let disposed = false
