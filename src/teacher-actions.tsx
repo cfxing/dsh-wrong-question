@@ -20,7 +20,7 @@ export function registerTeachingActions(ctx: Context): void {
 }
 
 function TeachingActionBar({ useInput, inputActions }: Props) {
-  const input = useInput(snapshot => ({ phase: snapshot.phase, draft: snapshot.draft }))
+  const input = useInput((snapshot: any) => ({ phase: snapshot.phase, draft: snapshot.draft }))
   const disabled = input.phase === 'submitting' || input.phase === 'adjudicating'
 
   const invoke = (skill: string, instruction: string) => {
