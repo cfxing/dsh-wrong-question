@@ -4,9 +4,10 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..')
-const [panelSource,clientSource,css]=await Promise.all([
+const [panelSource,clientSource,teacherActionsSource,css]=await Promise.all([
   readFile(resolve(root,'src/main-panel-compat.ts'),'utf8'),
   readFile(resolve(root,'src/client.tsx'),'utf8'),
+  readFile(resolve(root,'src/teacher-actions.tsx'),'utf8'),
   readFile(resolve(root,'src/client.css'),'utf8'),
 ])
 
@@ -18,6 +19,7 @@ const source=`
 import React,{useEffect,useMemo,useState} from 'react'
 const clientCss=${JSON.stringify(css)}
 ${withoutImports(panelSource)}
+${withoutImports(teacherActionsSource)}
 ${withoutImports(clientSource)}
 `
 const result=ts.transpileModule(source,{

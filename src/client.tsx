@@ -14,8 +14,11 @@ export const inject=['slots','layout']
 
 export function apply(ctx:Context){
   installStyles()
-  registerTeachingActions(ctx)
   const ui=ctx as any
+  // DSH can activate the web entry before optional conversation slots are
+  // available.  Do not let that timing difference reject the whole plugin.
+  if(!ui.slots||typeof ui.slots.inject!=='function') return
+  registerTeachingActions(ctx)
   let dispose:(()=>void)|undefined
   const open=()=>{dispose?.();dispose=registerMainPanel(ctx,PLUGIN_ID,-1,()=> <WrongQuestionWorkspace close={()=>{dispose?.();dispose=undefined}} />)}
   ui.slots.inject('sidebar.footer.action',()=>ui.slots.register({name:'sidebar.footer.action',id:'wrong-question',order:-9},()=>(

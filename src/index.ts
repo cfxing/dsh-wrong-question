@@ -1,7 +1,10 @@
 import type { Context } from '@deepseek-ai/cordis'
 
 export const name='wrong-question'
-export const inject=['tools','webServer']
+// `webServer` is acquired by runtime bootstrap after activation.  Declaring it
+// here makes the whole entrypoint fail on DSH 0.2.0-rc.2 when the web service
+// is registered after plugin boot (the plugin then shows as "web boot: failed").
+export const inject=['tools']
 
 /**
  * Keep the plugin entrypoint intentionally tiny.

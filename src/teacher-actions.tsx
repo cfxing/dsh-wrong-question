@@ -12,6 +12,7 @@ type Props = PropsRuntime<'conversation.input.right'>
 
 export function registerTeachingActions(ctx: Context): void {
   const ui = ctx as any
+  if (!ui.slots || typeof ui.slots.inject !== 'function') return
   ui.slots.inject('conversation.input.right', () => ui.slots.register({
     name: 'conversation.input.right',
     id: 'learning-actions',
