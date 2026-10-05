@@ -13,6 +13,16 @@ import { registerWrongQuestionWeb } from './web.js'
 import { KnowledgeGraph } from './knowledge-graph.js'
 import { OllamaEmbedder, type Embedder } from './embedding.js'
 import { hybridSearch } from './hybrid.js'
+export type RuntimeContextLike = Context & {
+  webServer?: {
+    register(route:{
+      kind:'exact'|'prefix'
+      path:string
+      handler:(req:import('node:http').IncomingMessage,res:import('node:http').ServerResponse)=>void|Promise<void>
+    }):()=>void
+  }
+}
+
 export const name='wrong-question'
 export const inject=['tools']
 
