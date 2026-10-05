@@ -18,7 +18,7 @@ export type RuntimeContextLike = Context & {
     register(route:{
       kind:'exact'|'prefix'
       path:string
-      handler:(req:import('node:http').IncomingMessage,res:import('node:http').ServerResponse)=>void|Promise<void>
+      handler:(req:import('node:http').IncomingMessage,res:import('node:http').ServerResponse)=>unknown|Promise<unknown>
     }):()=>void
   }
 }
