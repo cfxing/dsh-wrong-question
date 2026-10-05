@@ -50,7 +50,8 @@
     "pack:check": "npm pack --dry-run"
   },
   "dependencies": {
-    "@deepseek-ai/cordis": "~4.0.4"
+    "@deepseek-ai/cordis": "~4.0.4",
+    "kuzu": "0.11.3"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "~4.0.4",
