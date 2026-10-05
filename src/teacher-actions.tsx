@@ -13,11 +13,15 @@ type Props = PropsRuntime<'conversation.input.right'>
 export function registerTeachingActions(ctx: Context): void {
   const ui = ctx as any
   if (!ui.slots || typeof ui.slots.inject !== 'function') return
-  ui.slots.inject('conversation.input.right', () => ui.slots.register({
-    name: 'conversation.input.right',
-    id: 'learning-actions',
-    order: 80,
-  }, TeachingActionBar))
+  try {
+    ui.slots.inject('conversation.input.right', () => ui.slots.register({
+      name: 'conversation.input.right',
+      id: 'learning-actions',
+      order: 80,
+    }, TeachingActionBar))
+  } catch (err) {
+    console.error('[dsh-wrong-question] teaching slot registration failed:', err)
+  }
 }
 
 function TeachingActionBar({ useInput, inputActions }: Props) {

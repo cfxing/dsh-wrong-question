@@ -10,24 +10,43 @@ type Tab='dashboard'|'questions'|'review'|'graph'
 type Artifact={id?:string;kind:'image'|'video'|'html';title?:string;source?:string;content?:string;poster?:string}
 type Question={id:string;content:string;answer:string;source?:string;imagePath?:string;imageData?:string;imageMediaId?:string;artifacts:Artifact[];ocrText?:string;knowledgePoints:string[];tags:string[];difficulty:number;mistakeCause?:string;createdAt:string;updatedAt:string;review:{reps:number;ease:number;intervalDays:number;dueAt:string;lastReviewedAt?:string}}
 
-export const inject=['slots','layout']
+// layout is optional across DSH releases; main-panel-compat detects it at
+// runtime. Requiring it during web boot can reject the whole entrypoint.
+export const inject=['slots']
 
 export function apply(ctx:Context){
-  installStyles()
-  const ui=ctx as any
-  // DSH can activate the web entry before optional conversation slots are
-  // available.  Do not let that timing difference reject the whole plugin.
-  if(!ui.slots||typeof ui.slots.inject!=='function') return
-  registerTeachingActions(ctx)
-  let dispose:(()=>void)|undefined
-  const open=()=>{dispose?.();dispose=registerMainPanel(ctx,PLUGIN_ID,-1,()=> <WrongQuestionWorkspace close={()=>{dispose?.();dispose=undefined}} />)}
-  ui.slots.inject('sidebar.footer.action',()=>ui.slots.register({name:'sidebar.footer.action',id:'wrong-question',order:-9},()=>(
-    <button className="dsh-wq-launcher" title="错题库" onClick={open}><span className="dsh-wq-icon">错</span><span>错题库</span></button>
-  )))
-  ctx.effect(()=>()=>dispose?.(),'dsh-wrong-question: workspace lifecycle')
+  try {
+    installStyles()
+    const ui=ctx as any
+    // DSH can activate the web entry before optional conversation slots are
+    // available.  Do not let that timing difference reject the whole plugin.
+    if(!ui.slots||typeof ui.slots.inject!=='function') return
+    registerTeachingActions(ctx)
+    let dispose:(()=>void)|undefined
+    const open=()=>{
+      try {
+        dispose?.()
+        dispose=registerMainPanel(ctx,PLUGIN_ID,-1,()=> <WrongQuestionWorkspace close={()=>{dispose?.();dispose=undefined}} />)
+      } catch (err) {
+        console.error('[dsh-wrong-question] workspace registration failed:',err)
+      }
+    }
+    try {
+      ui.slots.inject('sidebar.footer.action',()=>ui.slots.register({name:'sidebar.footer.action',id:'wrong-question',order:-9},()=>(
+        <button className="dsh-wq-launcher" title="错题库" onClick={open}><span className="dsh-wq-icon">错</span><span>错题库</span></button>
+      )))
+    } catch (err) {
+      console.error('[dsh-wrong-question] sidebar slot registration failed:',err)
+    }
+    if(typeof ctx.effect==='function') ctx.effect(()=>()=>dispose?.(),'dsh-wrong-question: workspace lifecycle')
+  } catch (err) {
+    // Optional client UI must never make the whole web boot fail.
+    console.error('[dsh-wrong-question] client activation failed:',err)
+  }
 }
 
 function installStyles(){
+  if(typeof document==='undefined') return
   const id='dsh-wrong-question'
   if(document.querySelector(`style[data-plugin="${id}"]`))return
   const tag=document.createElement('style')
