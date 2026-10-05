@@ -1,7 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 
 export const name='wrong-question'
-export const inject=['tools']
+export const inject=['tools','webServer']
 
 /**
  * Keep the plugin entrypoint intentionally tiny.
