@@ -19,6 +19,30 @@ test('stores image data and searches every text field',t=>{
   assert.equal(db.search('试卷第十二题')[0]?.question.id,q.id)
 })
 
+test('keeps question base row free of legacy analysis and follow-up columns',t=>{
+  const db=database(t)
+  const columns=db.db.prepare('PRAGMA table_info(questions)').all().map(x=>x.name)
+  assert.equal(columns.includes('analysis'),false)
+  assert.equal(columns.includes('followup_question'),false)
+})
+
+test('search and recall can use structured question analysis',t=>{
+  const db=database(t)
+  const q=db.upsert({content:'函数综合题'})
+  db.saveQuestionAnalysis({
+    questionId:q.id,
+    solution:'先利用一次函数斜率判断变化规律',
+    mistakeType:'concept_gap',
+    reasoningError:'把斜率与截距混淆',
+    knowledgeGaps:['斜率理解'],
+    reasoningGaps:['无法根据图像解释斜率'],
+    correctionStrategy:['比较不同直线的斜率'],
+    variantSuggestions:['改变斜率后比较图像']
+  })
+  assert.equal(db.search('斜率')[0]?.question.id,q.id)
+  assert.equal(db.recall('截距混淆')[0]?.question.id,q.id)
+})
+
 test('similarity combines knowledge points, tags and question text',t=>{
   const db=database(t)
   const a=db.upsert({content:'求一元二次方程的根',knowledgePoints:['一元二次方程'],tags:['代数']})
@@ -35,4 +59,93 @@ test('dashboard exposes trends and weekly summary',t=>{
   assert.deepEqual(dashboard.difficulty.find(x=>x.level===4),{level:4,count:1})
   assert.equal(dashboard.weeklyReport.added,1)
   assert.equal(dashboard.mistakeCauses[0]?.name,'审题错误')
+})
+
+test('stores structured analysis and aggregates learning gaps',t=>{
+  const db=database(t)
+  const q=db.upsert({content:'求二次函数顶点',knowledgePoints:['二次函数']})
+  const analysis=db.saveQuestionAnalysis({
+    questionId:q.id,
+    solution:'先配方，再读取顶点坐标',
+    mistakeType:'concept_gap',
+    reasoningError:'没有把配方法与顶点公式联系起来',
+    knowledgeGaps:[
+      {name:'配方法理解',description:'不会通过配方法解释顶点公式',severity:.9,confidence:.95},
+      {name:'最值判断',severity:.7}
+    ],
+    reasoningGaps:['不会从变形结果反推图像性质'],
+    correctionStrategy:['复习完全平方公式','用配方法重新推导顶点'],
+    variantSuggestions:['改变参数后再求顶点','给定顶点反求参数'],
+    confidence:.92,
+    generatedBy:'harness-agent'
+  })
+  assert.equal(analysis.mistakeType,'concept_gap')
+  assert.deepEqual(analysis.knowledgeGaps,['配方法理解','最值判断'])
+  const gaps=db.getLearningGaps()
+  assert.equal(gaps.length,2)
+  assert.equal(gaps[0]?.name,'配方法理解')
+  assert.equal(gaps[0]?.questionCount,1)
+  assert.equal(db.getQuestionAnalysis(q.id)?.reasoningGaps[0],'不会从变形结果反推图像性质')
+})
+
+test('deduplicates the primary image when the same file is also passed as an image artifact',t=>{
+  const db=database(t)
+  const q=db.upsert({
+    content:'平面镜成像作图',
+    imagePath:'media/q1/original.png',
+    artifacts:[
+      {kind:'image',title:'原图重复',source:'media/q1/original.png'},
+      {kind:'image',title:'解题图示',source:'media/q1/solution.png'}
+    ]
+  })
+  const media=db.db.prepare('SELECT kind,source,title FROM question_media WHERE question_id=? ORDER BY sort_order').all(q.id)
+  assert.equal(media.length,2)
+  assert.equal(media.some(x=>x.source==='media/q1/original.png'&&x.kind==='image'),true)
+  assert.equal(media.filter(x=>x.source==='media/q1/original.png').length,1)
+  assert.equal(db.getQuestion(q.id)?.artifacts.length,1)
+  assert.equal(db.getQuestion(q.id)?.artifacts[0]?.source,'media/q1/solution.png')
+})
+
+test('links a persisted image file as question media without storing bytes in SQLite',t=>{
+  const db=database(t)
+  const q=db.upsert({content:'图片错题'})
+  const media=db.addQuestionImage({
+    questionId:q.id,
+    source:'media/'+q.id+'/abc.png',
+    mimeType:'image/png',
+    title:'题目原图'
+  })
+  assert.equal(media.kind,'image')
+  assert.equal(db.getQuestion(q.id)?.imagePath,'media/'+q.id+'/abc.png')
+  assert.equal(db.getMedia(q.id,media.id)?.mime_type,'image/png')
+})
+
+test('stores generated variants and real attempts independently from review logs',t=>{
+  const db=database(t)
+  const q=db.upsert({content:'一元二次方程求根'})
+  const variant=db.addQuestionVariant({
+    questionId:q.id,
+    variantType:'number_change',
+    content:'改变系数后重新求根',
+    answer:'x=2,-3',
+    analysis:'检查求根公式代入',
+    difficulty:3,
+    generatedBy:'harness-agent'
+  })
+  assert.equal(db.listQuestionVariants(q.id)[0]?.id,variant.id)
+  const attempt=db.recordQuestionAttempt({
+    questionId:q.id,
+    variantId:variant.id,
+    userAnswer:'x=2',
+    isCorrect:false,
+    score:.5,
+    timeSpentMs:12000,
+    mistakeCause:'计算错误',
+    analysis:'判别式计算出错'
+  })
+  assert.equal(db.listQuestionAttempts(q.id)[0]?.isCorrect,false)
+  assert.equal(db.listQuestionAttempts(q.id)[0]?.variantId,variant.id)
+  assert.equal(db.listQuestionAttempts(q.id)[0]?.timeSpentMs,12000)
+  assert.equal(db.listQuestionAttempts(q.id)[0]?.mistakeCause,'计算错误')
+  assert.equal(db.logs().length,0)
 })
