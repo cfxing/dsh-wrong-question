@@ -1,5 +1,6 @@
 node_modules
 dist
+lib
 .DS_Store
 *.swp
 .git/*
@@ -92,3 +93,5 @@ logs/
 
 # CodeGraph index
 .codegraph
+
+*.tgz
