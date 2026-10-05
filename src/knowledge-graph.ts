@@ -1,4 +1,3 @@
-import { Database as KuzuDb, Connection as KuzuConn } from 'kuzu'
 import type { Question } from './domain.js'
 import type { Embedder } from './embedding.js'
 
@@ -7,15 +6,35 @@ export interface VectorHit { id:string; distance:number }
 export interface GraphTraversalHit { id:string; path:string[]; hops:number }
 const DEFAULT_TOP_K=20
 
+/**
+ * Kuzu is an optional acceleration layer for the wrong-question plugin.
+ *
+ * IMPORTANT: do not statically import the native Kuzu binding here. A broken or
+ * unavailable native binding must not prevent the whole DSH plugin from loading;
+ * initGraph() will catch the async initialization failure and fall back to
+ * SQLite/FTS. This mirrors the "host capability must not take down the plugin"
+ * rule used by the working teacher marketplace stack.
+ */
 export class KnowledgeGraph {
-  readonly db:KuzuDb
-  readonly conn:KuzuConn
+  db:any
+  conn:any
   private readonly embedder:Embedder
   ready:Promise<void>
 
-  constructor(options:KGraphOptions){this.embedder=options.embedder;this.db=new KuzuDb(options.path);this.conn=new KuzuConn(this.db);this.ready=this.init()}
+  constructor(options:KGraphOptions){
+    this._path=options.path
+    this.embedder=options.embedder
+    this.db=undefined
+    this.conn=undefined
+    this.ready=this.init()
+  }
 
   private async init(){
+    const mod=await import('kuzu')
+    const KuzuDb=mod.Database
+    const KuzuConn=mod.Connection
+    this.db=new KuzuDb(this.pathForDb())
+    this.conn=new KuzuConn(this.db)
     await this.conn.init()
     await this.conn.query('CREATE NODE TABLE IF NOT EXISTS Question (id STRING PRIMARY KEY,text STRING,embedding FLOAT['+this.embedder.dim+'],source STRING,updatedAt STRING)')
     await this.conn.query('CREATE NODE TABLE IF NOT EXISTS KnowledgePoint (name STRING PRIMARY KEY)')
@@ -28,9 +47,21 @@ export class KnowledgeGraph {
     await this.conn.query('CREATE REL TABLE IF NOT EXISTS SIMILAR_TO (FROM Question TO Question, score DOUBLE)')
   }
 
-  async close(){await this.conn.close();this.db.close()}
+  private pathForDb(){return this._path}
+  private readonly _path:string
+
+  async close(){
+    if(this.conn)await this.conn.close()
+    if(this.db)this.db.close()
+  }
+
   private esc(s:string){return s.replace(/'/g,"''")}
-  private async q(text:string):Promise<Record<string,unknown>[]> {const rs=await this.conn.query(text);const res=Array.isArray(rs)?rs[0]:rs;return(await res.getAll()) as Record<string,unknown>[]}
+  private async q(text:string):Promise<Record<string,unknown>[]> {
+    if(!this.conn)throw new Error('Kuzu connection is not initialized')
+    const rs=await this.conn.query(text)
+    const res=Array.isArray(rs)?rs[0]:rs
+    return(await res.getAll()) as Record<string,unknown>[]
+  }
 
   async upsertQuestion(q:Question){
     const text=[q.content,q.answer,q.mistakeCause,q.ocrText,...q.knowledgePoints,...q.tags].filter((x):x is string=>!!x).join(' ')
@@ -57,10 +88,17 @@ export class KnowledgeGraph {
     await this.q('MATCH ()-[r:CO_OCCURS]->() DELETE r').catch(()=>{})
     const rows=await this.q('MATCH (q:Question)-[:HAS_POINT]->(k:KnowledgePoint) RETURN q.id AS id,k.name AS name').catch(()=>[])
     const byQuestion=new Map<string,string[]>()
-    for(const r of rows as Record<string,unknown>[]){const id=String(r.id),name=String(r.name);const a=byQuestion.get(id)??[];a.push(name);byQuestion.set(id,a)}
+    for(const r of rows){const id=String(r.id),name=String(r.name);const a=byQuestion.get(id)??[];a.push(name);byQuestion.set(id,a)}
     const weights=new Map<string,number>()
-    for(const points of byQuestion.values()){const ps=[...new Set(points)].sort();for(let i=0;i<ps.length;i++)for(let j=i+1;j<ps.length;j++){const a=ps[i],b=ps[j],key=a+'\\0'+b;weights.set(key,(weights.get(key)??0)+1)}}
-    for(const [key,weight] of weights){const [a,b]=key.split('\\0');await this.q("MATCH (a:KnowledgePoint {name:'"+this.esc(a)+"'}),(b:KnowledgePoint {name:'"+this.esc(b)+"'}) MERGE (a)-[r:CO_OCCURS]->(b) SET r.weight="+weight);await this.q("MATCH (a:KnowledgePoint {name:'"+this.esc(b)+"'}),(b:KnowledgePoint {name:'"+this.esc(a)+"'}) MERGE (a)-[r:CO_OCCURS]->(b) SET r.weight="+weight)}
+    for(const points of byQuestion.values()){
+      const ps=[...new Set(points)].sort()
+      for(let i=0;i<ps.length;i++)for(let j=i+1;j<ps.length;j++){const a=ps[i],b=ps[j],key=a+'\\0'+b;weights.set(key,(weights.get(key)??0)+1)}
+    }
+    for(const [key,weight] of weights){
+      const [a,b]=key.split('\\0')
+      await this.q("MATCH (a:KnowledgePoint {name:'"+this.esc(a)+"'}),(b:KnowledgePoint {name:'"+this.esc(b)+"'}) MERGE (a)-[r:CO_OCCURS]->(b) SET r.weight="+weight)
+      await this.q("MATCH (a:KnowledgePoint {name:'"+this.esc(b)+"'}),(b:KnowledgePoint {name:'"+this.esc(a)+"'}) MERGE (a)-[r:CO_OCCURS]->(b) SET r.weight="+weight)
+    }
   }
 
   async deleteQuestion(id:string){await this.q("MATCH (n:Question {id:'"+this.esc(id)+"'}) DETACH DELETE n").catch(()=>{});await this.rebuildCoOccurs().catch(()=>{})}
@@ -79,7 +117,7 @@ export class KnowledgeGraph {
   async findKnowledgePoints(query:string,topK=20):Promise<string[]>{
     const terms=query.normalize('NFKC').toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu)??[]
     const rows=await this.q('MATCH (k:KnowledgePoint) RETURN k.name AS name').catch(()=>[])
-    const scored=(rows as Record<string,unknown>[]).map(r=>{const name=String(r.name),low=name.toLocaleLowerCase();let score=0;for(const t of terms)if(low.includes(t)||t.includes(low))score+=1;return{name,score}}).filter(x=>x.score>0).sort((a,b)=>b.score-a.score)
+    const scored=rows.map(r=>{const name=String(r.name),low=name.toLocaleLowerCase();let score=0;for(const t of terms)if(low.includes(t)||t.includes(low))score+=1;return{name,score}}).filter(x=>x.score>0).sort((a,b)=>b.score-a.score)
     return scored.slice(0,topK).map(x=>x.name)
   }
 
@@ -91,7 +129,7 @@ export class KnowledgeGraph {
       const rows=await this.q("MATCH (q:Question)-[:HAS_POINT]->(k:KnowledgePoint) WHERE k.name IN ["+names+"] RETURN DISTINCT q.id AS id,k.name AS kp").catch(()=>[])
       for(const r of rows){const id=String(r.id),kp=String(r.kp),old=seen.get(id);if(old){if(!old.path.includes(kp))old.path.push(kp);old.hops=Math.max(old.hops,hop)}else seen.set(id,{id,path:[kp],hops:hop})}
       const next=await this.q("MATCH (a:KnowledgePoint)-[:CO_OCCURS]->(b:KnowledgePoint) WHERE a.name IN ["+names+"] RETURN DISTINCT b.name AS name").catch(()=>[])
-      boundary=[...new Set((next as Record<string,unknown>[]).map(r=>String(r.name)).filter(x=>x))]
+      boundary=[...new Set(next.map(r=>String(r.name)).filter(x=>x))]
     }
     return[...seen.values()].slice(0,topK)
   }
