@@ -16,8 +16,8 @@ const DEFAULT_TOP_K=20
  * rule used by the working teacher marketplace stack.
  */
 export class KnowledgeGraph {
-  readonly db:any
-  readonly conn:any
+  db:any
+  conn:any
   private readonly embedder:Embedder
   ready:Promise<void>
 
