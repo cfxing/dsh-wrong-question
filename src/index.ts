@@ -14,7 +14,7 @@ import { KnowledgeGraph } from './knowledge-graph.js'
 import { OllamaEmbedder, type Embedder } from './embedding.js'
 import { hybridSearch } from './hybrid.js'
 export const name='wrong-question'
-export const inject=['tools']
+export const inject=['tools','webServer']
 
 function wrongQuestionDir(){const home=process.env.DSH_HOME||join(homedir(),'.dsh');const dir=join(home,'wrong-question');mkdirSync(dir,{recursive:true});return dir}
 function dbPath(){return join(wrongQuestionDir(),'wrong-questions.sqlite')}
@@ -59,9 +59,7 @@ export function apply(ctx:Context){
     void current?.close()
   },'dsh-wrong-question: sqlite')
   // Browser workspace and server API share the same SQLite connection.
-  const runtime=ctx as any
-  if(runtime.inject)runtime.inject(['webServer'],(http:any)=>registerWrongQuestionWeb(http,db,webRuntime))
-  else if(runtime.webServer)registerWrongQuestionWeb(runtime,db,webRuntime)
+  registerWrongQuestionWeb(ctx,db,webRuntime)
 
   // Tool registration is intentionally kept compact here; the Web workspace uses
   // the same domain service, so Agents and UI cannot diverge in persistence.
