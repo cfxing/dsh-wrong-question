@@ -10,9 +10,9 @@ type Tab='dashboard'|'questions'|'review'|'graph'
 type Artifact={id?:string;kind:'image'|'video'|'html';title?:string;source?:string;content?:string;poster?:string}
 type Question={id:string;content:string;answer:string;source?:string;imagePath?:string;imageData?:string;imageMediaId?:string;artifacts:Artifact[];ocrText?:string;knowledgePoints:string[];tags:string[];difficulty:number;mistakeCause?:string;createdAt:string;updatedAt:string;review:{reps:number;ease:number;intervalDays:number;dueAt:string;lastReviewedAt?:string}}
 
-// layout is optional across DSH releases; main-panel-compat detects it at
-// runtime. Requiring it during web boot can reject the whole entrypoint.
-export const inject=['slots']
+// The workspace needs layout.selectPanel to become visible after registration.
+// main-panel-compat still guards the service for hosts that do not provide it.
+export const inject=['slots','layout']
 
 export function apply(ctx:Context){
   try {
