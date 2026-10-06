@@ -3,7 +3,10 @@ import type { Context } from '@deepseek-ai/cordis'
 
 export function registerMainPanel(ctx: Context,id:string,priority:number,render:(props:any)=>React.ReactElement,onHidden=()=>{}):()=>void{
   const ui=ctx as any
-  const layout=ui.layout as {selectPanel?: (id:string|null)=>void}
+  // `layout` is optional in newer DSH web entries. Cordis contexts can throw
+  // when an undeclared service property is read, so probe it defensively.
+  let layout:{selectPanel?: (id:string|null)=>void}|undefined
+  try { layout=ui.layout as {selectPanel?: (id:string|null)=>void} } catch { layout=undefined }
   if(!ui.slots||typeof ui.slots.register!=='function') return ()=>{}
   if(typeof layout?.selectPanel!=='function') return ui.slots.register({name:'conversation',priority},render)
   const slots=ui.slots as {register(o:{name:'main';key:string},c:(p:any)=>React.ReactElement):()=>void}
