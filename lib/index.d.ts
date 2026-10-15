@@ -1,8 +1,12 @@
 import type { Context } from '@deepseek-ai/cordis';
-import { KnowledgeGraph } from './knowledge-graph.js';
-import { type Embedder } from './embedding.js';
 export declare const name = "wrong-question";
 export declare const inject: string[];
+/**
+ * Keep the plugin entrypoint intentionally tiny.
+ *
+ * DeepSeek Harness evaluates this module during web boot. Runtime modules are
+ * loaded only after the entrypoint has activated, so a SQLite/Kuzu/Web/media
+ * failure is reported as a bootstrap error instead of making plugin loading
+ * fail before activation.
+ */
 export declare function apply(ctx: Context): void;
-/** 初始化 Kuzu 图存储并做全量投影；失败（如原生绑定缺失/库不可用）返回 null，系统降级为纯 SQLite。 */
-export declare function initGraph(questions: import('./domain.js').Question[], embedder: Embedder): Promise<KnowledgeGraph | null>;

@@ -38,19 +38,21 @@ function parseSkill(file: string, fallbackName: string): WrongQuestionSkill {
 }
 
 export function registerWrongQuestionSkills(ctx: Context): void {
-  const file = join(SKILLS_DIR, 'learning-variant', 'SKILL.md')
-  if (!existsSync(file)) return
-  const skill = parseSkill(file, 'learning-variant')
-  const registration: SkillRegistration = {
-    ...skill,
-    source: 'runtime',
-    provider: 'wrong-question',
-    invocation: {
-      modelInvocable: skill.modelInvocable ?? true,
-      userInvocable: skill.userInvocable ?? true,
-    },
+  for (const name of ['learning-variant']) {
+    const file = join(SKILLS_DIR, name, 'SKILL.md')
+    if (!existsSync(file)) continue
+    const skill = parseSkill(file, name)
+    const registration: SkillRegistration = {
+      ...skill,
+      source: 'runtime',
+      provider: 'wrong-question',
+      invocation: {
+        modelInvocable: skill.modelInvocable ?? true,
+        userInvocable: skill.userInvocable ?? true,
+      },
+    }
+    ctx.skills.register(registration)
   }
-  ctx.skills.register(registration)
 }
 
 export const skillsDirectory = SKILLS_DIR

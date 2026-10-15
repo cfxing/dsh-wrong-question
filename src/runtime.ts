@@ -13,6 +13,7 @@ import { registerWrongQuestionWeb } from './web.js'
 import { KnowledgeGraph } from './knowledge-graph.js'
 import { OllamaEmbedder, type Embedder } from './embedding.js'
 import { hybridSearch } from './hybrid.js'
+import { registerWrongQuestionSkills } from './skills.js'
 export type RuntimeContextLike = Context & {
   webServer?: {
     register(route:{
@@ -30,6 +31,7 @@ function wrongQuestionDir(){const home=process.env.DSH_HOME||join(homedir(),'.ds
 function dbPath(){return join(wrongQuestionDir(),'wrong-questions.sqlite')}
 
 export function bootstrap(ctx:Context){
+  registerWrongQuestionSkills(ctx)
   const embedder = new OllamaEmbedder()
   let graph: KnowledgeGraph | null = null
   let disposed = false
